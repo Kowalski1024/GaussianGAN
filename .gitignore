@@ -1,0 +1,7 @@
+__pycache__
+venv
+training-runs/*
+*.out
+*.log
+*.err
+run.sh
