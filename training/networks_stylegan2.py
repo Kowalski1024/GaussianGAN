@@ -600,7 +600,7 @@ class SynthesisNetwork(torch.nn.Module):
             
             images[i] = image
 
-            del pc, camera, image
+            del pc, camera
 
         return images
 
