@@ -568,13 +568,13 @@ class SynthesisNetwork(torch.nn.Module):
         ### 3D GAUSSIAN SPLATTING ###
         gaussians = img
 
-        cam2world_matrix = c[:, :16].view(-1, 4, 4).cpu().detach()
-        intrinsics = c[:, 16:25].view(-1, 3, 3).cpu().detach()
+        cam2world_matrix = c[:, :16].view(-1, 4, 4).detach()
+        intrinsics = c[:, 16:25].view(-1, 3, 3).detach()
 
         N = ws.shape[0]
         assert ws.shape[0] == c.shape[0]
 
-        images = torch.empty(N, 3, self.img_resolution, self.img_resolution, device=ws.device)
+        images = []
         FoVx, FoVy, camera_center, world_view_transform, full_proj_transform = extract_camera_info(cam2world_matrix, intrinsics)
 
         for i in range(N):
@@ -590,19 +590,19 @@ class SynthesisNetwork(torch.nn.Module):
 
             a = FoVx[i].item()
             b = FoVy[i].item()
-            c = world_view_transform[i].cuda()
-            d = full_proj_transform[i].cuda()
-            e = camera_center[i].cuda()
+            c = world_view_transform[i]
+            d = full_proj_transform[i]
+            e = camera_center[i]
 
             camera = Camera(a,b ,c ,d ,e)
 
             image = render(camera, pc, False, self.background)["render"]
             
-            images[i] = image
+            images.append(image)
 
-            del pc, camera
-
-        return images
+            del camera, pc
+            
+        return torch.stack(images).clone()
 
     def extra_repr(self):
         return ' '.join([
