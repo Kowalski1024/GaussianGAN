@@ -496,10 +496,8 @@ def extract_camera_info(camera_to_world, intrinsics):
     w2c = torch.inverse(camera_to_world)
 
     # Extract FoVx and FoVy from intrinsics matrix
-    focal_length_x = intrinsics[:, 0, 0]
-    focal_length_y = intrinsics[:, 1, 1]
-    FoVx = 2 * torch.atan(128 / focal_length_x)
-    FoVy = 2 * torch.atan(128 / focal_length_y)
+    FoVx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
+    FoVy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
 
     world_view_transform = w2c.transpose(-2, -1)
     zfar = 100.0
@@ -569,7 +567,7 @@ class SynthesisNetwork(torch.nn.Module):
         gaussians = img
 
         cam2world_matrix = c[:, :16].view(-1, 4, 4).detach()
-        intrinsics = c[:, 16:25].view(-1, 3, 3).detach()
+        intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
 
         N = ws.shape[0]
         assert ws.shape[0] == c.shape[0]
@@ -577,6 +575,7 @@ class SynthesisNetwork(torch.nn.Module):
         images = []
         FoVx, FoVy, camera_center, world_view_transform, full_proj_transform = extract_camera_info(cam2world_matrix, intrinsics)
 
+        pc = None
         for i in range(N):
             # 59 channels: 3 for XYZ, 3 for f_dc, 45 for f_rest, 3 for scaling, 4 for rotation, 1 for opacity
             xyz = gaussians[i, :3].view(-1, 3)
@@ -590,9 +589,9 @@ class SynthesisNetwork(torch.nn.Module):
 
             a = FoVx[i].item()
             b = FoVy[i].item()
-            c = world_view_transform[i]
-            d = full_proj_transform[i]
-            e = camera_center[i]
+            c = world_view_transform[i].contiguous()
+            d = full_proj_transform[i].contiguous()
+            e = camera_center[i].contiguous()
 
             camera = Camera(a,b ,c ,d ,e)
 
@@ -600,9 +599,11 @@ class SynthesisNetwork(torch.nn.Module):
             
             images.append(image)
 
-            del camera, pc
-            
-        return torch.stack(images).clone()
+            del camera
+
+        tensor = torch.stack(images).contiguous()
+
+        return tensor
 
     def extra_repr(self):
         return ' '.join([
