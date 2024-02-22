@@ -84,7 +84,53 @@ def extract_cameras(camera_to_world, intrinsics) -> List[Camera]:
     return cameras
 
 
-def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor, scaling_modifier = 1.0):
+def uniform_circle(low: float, high: float):
+    """Sample a point uniformly from half of a circle.
+
+    The returned point is described by an angle from `low` to `high`. The samples
+    are drawn so that the points on the circle would follow a uniform distribution.
+    Angles don't follow a uniform distribution.
+    """
+    if low < 0 or high > 180 or low > high:
+        raise ValueError("Angles must be in range [0, 180] and `low` must be smaller than `high`!")
+
+    low = low / 180 * np.pi
+    high = high / 180 * np.pi
+    sample = np.random.uniform(low=0, high=1)
+    sample_radians = np.arccos(np.cos(low) - sample * (np.cos(low) - np.cos(high)))
+    return sample_radians / np.pi * 180
+
+
+trans_t = lambda t : torch.Tensor([
+    [1,0,0,0],
+    [0,1,0,0],
+    [0,0,1,t],
+    [0,0,0,1]]).float()
+
+
+rot_phi = lambda phi : torch.Tensor([
+    [1,0,0,0],
+    [0,np.cos(phi),-np.sin(phi),0],
+    [0,np.sin(phi), np.cos(phi),0],
+    [0,0,0,1]]).float()
+
+
+rot_theta = lambda th : torch.Tensor([
+    [np.cos(th),0,-np.sin(th),0],
+    [0,1,0,0],
+    [np.sin(th),0, np.cos(th),0],
+    [0,0,0,1]]).float()
+
+
+def pose_spherical(theta, phi, radius):
+    c2w = trans_t(radius)
+    c2w = rot_phi(phi/180.*np.pi) @ c2w
+    c2w = rot_theta(theta/180.*np.pi) @ c2w
+    c2w = torch.Tensor(np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])) @ c2w
+    return c2w
+
+
+def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor, scaling_modifier = 1.0, use_rgb=False):
     """
     Render the scene. 
     
@@ -134,7 +180,11 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     shs = None
-    colors_precomp = pc.shs.squeeze(1)
+    colors_precomp = None
+    if use_rgb:
+        colors_precomp = pc.shs.squeeze(1)
+    else:
+        shs = pc.shs
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, _ = rasterizer(
@@ -180,7 +230,7 @@ class MLP(torch.nn.Module):
         n_neurons: int = 128,
         n_hidden_layers: int = 2,
         activation: str = "silu",
-        output_activation = None,
+        output_activation = "silu",
         bias: bool = True,
     ):
         super().__init__()
@@ -202,6 +252,8 @@ class MLP(torch.nn.Module):
                 n_neurons, dim_out, is_first=False, is_last=True, bias=bias
             )
         ]
+        if output_activation is not None:
+            layers.append(self.make_activation(output_activation))
         self.layers = torch.nn.Sequential(*layers)
 
     def forward(self, x):
@@ -229,6 +281,7 @@ class GaussianDecoder(torch.nn.Module):
         "shs": 3,
         "xyz": 3
     }
+    use_rgb = True
 
     def __init__(self, channels = None) -> None:
         super().__init__()
@@ -263,8 +316,11 @@ class GaussianDecoder(torch.nn.Module):
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                v = torch.sigmoid(v)
+                if self.use_rgb:
+                    v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
+            elif k == "xyz":
+                v = torch.tanh(v)
             ret[k] = v
 
         return GaussianModel(**ret)
@@ -299,9 +355,22 @@ class SynthesisNetwork(torch.nn.Module):
         self.img_resolution = img_resolution
 
     def forward(self, ws, c, **block_kwargs):
-        cam2world_matrix = c[:, :16].view(-1, 4, 4).detach()
-        intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
-        cameras = extract_cameras(cam2world_matrix, intrinsics)
+        # check if c is empty tensor
+        if c.numel() == 0:
+            poses = torch.stack([
+                    pose_spherical(
+                        theta=np.random.uniform(low=-180, high=180),
+                        phi=90 - uniform_circle(low=90, high=180),
+                        radius=1.25
+                        )
+                    for _ in range(ws.shape[0])
+                ], dim=0).to(c.device)
+            poses[:, :3, 1:3] *= -1
+            intrinsics = torch.tensor([[512.0, 0.0, 256.0], [0.0, 512.0, 256.0], [0.0, 0.0, 1.0]], device=c.device).unsqueeze(0).repeat(ws.shape[0], 1, 1)
+        else:
+            poses = c[:, :16].view(-1, 4, 4).detach()
+            intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
+        cameras = extract_cameras(poses, intrinsics)
 
         hidden_features = self.backbone(ws, **block_kwargs)
 
@@ -311,7 +380,7 @@ class SynthesisNetwork(torch.nn.Module):
             camera = cameras[i]
             features = hidden_features[i].view(-1, self.img_resolution ** 2).transpose(0, 1)
             gaussian = self.gaussian_decoder(features)
-            images.append(render(camera, gaussian, self.background))
+            images.append(render(camera, gaussian, self.background, use_rgb=self.gaussian_decoder.use_rgb))
 
         return torch.stack(images, dim=0).contiguous()
 
@@ -332,7 +401,7 @@ class Generator(torch.nn.Module):
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=512, **synthesis_kwargs)
+        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=64, img_channels=128, **synthesis_kwargs)
         self.num_ws = self.synthesis.num_ws
         self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 

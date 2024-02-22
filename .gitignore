@@ -5,3 +5,4 @@ training-runs/*
 *.log
 *.err
 run.sh
+datasets/*

@@ -17,6 +17,8 @@ import PIL.Image
 import json
 import torch
 import dnnlib
+from pathlib import Path
+import random
 
 try:
     import pyspng
@@ -164,22 +166,21 @@ class ImageFolderDataset(Dataset):
         self._path = path
         self._zipfile = None
 
-        if os.path.isdir(self._path):
+        if Path(self._path).is_dir():
             self._type = 'dir'
-            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
-        elif self._file_ext(self._path) == '.zip':
+            self._all_png_names = [str(p.relative_to(self._path)) for p in Path(self._path).rglob('*.png')]
+        elif Path(self._path).suffix == '.zip':
             self._type = 'zip'
-            self._all_fnames = set(self._get_zipfile().namelist())
+            self._all_png_names = [fname for fname in self._get_zipfile().namelist() if fname.endswith('.png')]
         else:
             raise IOError('Path must point to a directory or zip')
-
+        
         PIL.Image.init()
-        self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
-        if len(self._image_fnames) == 0:
+        if len(self._all_png_names) == 0:
             raise IOError('No image files found in the specified path')
 
         name = os.path.splitext(os.path.basename(self._path))[0]
-        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
+        raw_shape = [len(self._all_png_names)] + list(self._load_raw_image(0).shape)
         if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
             raise IOError('Image files do not match the specified resolution')
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
@@ -212,29 +213,32 @@ class ImageFolderDataset(Dataset):
         return dict(super().__getstate__(), _zipfile=None)
 
     def _load_raw_image(self, raw_idx):
-        fname = self._image_fnames[raw_idx]
+        fname = self._all_png_names[raw_idx]
         with self._open_file(fname) as f:
             if pyspng is not None and self._file_ext(fname) == '.png':
                 image = pyspng.load(f.read())
+                if image.shape[2] == 4:  # RGBA image
+                    image = image[:, :, :3]  # discard alpha channel
             else:
                 image = np.array(PIL.Image.open(f))
+
         if image.ndim == 2:
             image = image[:, :, np.newaxis] # HW => HWC
         image = image.transpose(2, 0, 1) # HWC => CHW
         return image
 
     def _load_raw_labels(self):
-        fname = 'dataset.json'
-        if fname not in self._all_fnames:
-            return None
-        with self._open_file(fname) as f:
-            labels = json.load(f)['labels']
-        if labels is None:
-            return None
-        labels = dict(labels)
-        labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
-        labels = np.array(labels)
-        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+        labels = []
+        for image_path in self._all_png_names:
+            pose_path = image_path.replace('rgb', 'pose').replace('png', 'txt')
+            intrinsics_path = image_path.replace('rgb', 'intrinsics').replace('png', 'txt')
+            with self._open_file(pose_path) as f:
+                pose = np.loadtxt(f)
+            with self._open_file(intrinsics_path) as f:
+                intrinsics = np.loadtxt(f) / 512.0
+                intrinsics[-1] = 1.0
+            labels.append(np.concatenate((pose, intrinsics)))
+        labels = np.array(labels, dtype=np.float32)
         return labels
 
 #----------------------------------------------------------------------------

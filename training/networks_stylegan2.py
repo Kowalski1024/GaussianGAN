@@ -19,9 +19,6 @@ from torch_utils.ops import conv2d_resample
 from torch_utils.ops import upfirdn2d
 from torch_utils.ops import bias_act
 from torch_utils.ops import fma
-from scene.gaussian_model import GaussianModel
-from scene.cameras import Camera
-from gaussian_render import render
 
 #----------------------------------------------------------------------------
 
@@ -465,51 +462,6 @@ class SynthesisBlock(torch.nn.Module):
         return f'resolution={self.resolution:d}, architecture={self.architecture:s}'
 
 #----------------------------------------------------------------------------
-from utils.graphics_utils import getWorld2View2, getProjectionMatrix
-
-def getProjectionMatrix(znear, zfar, fovX, fovY):
-    bath_size = fovX.shape[0]
-    tanHalfFovY = torch.tan((fovY / 2))
-    tanHalfFovX = torch.tan((fovX / 2))
-
-    top = tanHalfFovY * znear
-    bottom = -top
-    right = tanHalfFovX * znear
-    left = -right
-
-    P = torch.zeros((bath_size, 4, 4), device=fovX.device)
-
-    z_sign = 1.0
-
-    P[:, 0, 0] = 2.0 * znear / (right - left)
-    P[:, 1, 1] = 2.0 * znear / (top - bottom)
-    P[:, 0, 2] = (right + left) / (right - left)
-    P[:, 1, 2] = (top + bottom) / (top - bottom)
-    P[:, 3, 2] = z_sign
-    P[:, 2, 2] = z_sign * zfar / (zfar - znear)
-    P[:, 2, 3] = -(zfar * znear) / (zfar - znear)
-    return P
-
-def extract_camera_info(camera_to_world, intrinsics):
-    # camera_to_world = camera_to_world.clone()
-    # camera_to_world[:, :3, 1:3] = camera_to_world[:, :3, 1:3] * -1
-    w2c = torch.inverse(camera_to_world)
-
-    # Extract FoVx and FoVy from intrinsics matrix
-    FoVx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
-    FoVy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
-
-    world_view_transform = w2c.transpose(-2, -1)
-    zfar = 100.0
-    znear = 0.01
-
-    # Calculate projection matrix
-    projection_matrix = getProjectionMatrix(znear, zfar, FoVx, FoVy).transpose(-2, -1)
-
-    full_proj_transform = torch.bmm(world_view_transform, projection_matrix)
-    camera_center = torch.inverse(world_view_transform)[:, 3, :3]
-    return FoVx, FoVy, camera_center, world_view_transform, full_proj_transform
-
 
 @persistence.persistent_class
 class SynthesisNetwork(torch.nn.Module):
@@ -547,7 +499,7 @@ class SynthesisNetwork(torch.nn.Module):
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
 
-    def forward(self, ws, c, **block_kwargs):
+    def forward(self, ws, **block_kwargs):
         block_ws = []
         with torch.autograd.profiler.record_function('split_ws'):
             misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
@@ -563,47 +515,7 @@ class SynthesisNetwork(torch.nn.Module):
             block = getattr(self, f'b{res}')
             x, img = block(x, img, cur_ws, **block_kwargs)
         
-        ### 3D GAUSSIAN SPLATTING ###
-        gaussians = img
-
-        cam2world_matrix = c[:, :16].view(-1, 4, 4).detach()
-        intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
-
-        N = ws.shape[0]
-        assert ws.shape[0] == c.shape[0]
-
-        images = []
-        FoVx, FoVy, camera_center, world_view_transform, full_proj_transform = extract_camera_info(cam2world_matrix, intrinsics)
-
-        pc = None
-        for i in range(N):
-            # 59 channels: 3 for XYZ, 3 for f_dc, 45 for f_rest, 3 for scaling, 4 for rotation, 1 for opacity
-            xyz = gaussians[i, :3].view(-1, 3)
-            f_dc = gaussians[i, 3:6].view(-1, 1, 3)
-            f_rest = gaussians[i, 6:51].view(-1, 15, 3)
-            scaling = gaussians[i, 51:54].view(-1, 3)
-            rotation = gaussians[i, 54:58].view(-1, 4)
-            opacity = gaussians[i, 58].view(-1, 1)
-
-            pc = GaussianModel(3, xyz, f_dc, f_rest, scaling, rotation, opacity)
-
-            a = FoVx[i].item()
-            b = FoVy[i].item()
-            c = world_view_transform[i].contiguous()
-            d = full_proj_transform[i].contiguous()
-            e = camera_center[i].contiguous()
-
-            camera = Camera(a,b ,c ,d ,e)
-
-            image = render(camera, pc, False, self.background)["render"]
-            
-            images.append(image)
-
-            del camera
-
-        tensor = torch.stack(images).contiguous()
-
-        return tensor
+        return img
 
     def extra_repr(self):
         return ' '.join([
