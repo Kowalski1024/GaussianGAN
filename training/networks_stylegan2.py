@@ -565,7 +565,7 @@ class DiscriminatorBlock(torch.nn.Module):
         architecture        = 'resnet',     # Architecture: 'orig', 'skip', 'resnet'.
         activation          = 'lrelu',      # Activation function: 'relu', 'lrelu', etc.
         resample_filter     = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
-        conv_clamp          = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
+        conv_clamp          = 256,         # Clamp the output of convolution layers to +-X, None = disable clamping.
         use_fp16            = False,        # Use FP16 for this block?
         fp16_channels_last  = False,        # Use channels-last memory format with FP16?
         freeze_layers       = 0,            # Freeze-D: Number of layers to freeze.

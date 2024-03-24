@@ -15,6 +15,10 @@ class GaussianModel(NamedTuple):
     scaling: torch.Tensor
     shs: torch.Tensor
 
+    def load_state_dict(self, state_dict):
+        for k, v in state_dict.items():
+            setattr(self, k, v)
+
     def __repr__(self) -> str:
         return f"GaussianModel(xyz={self.xyz.shape}, opacity={self.opacity.shape}, rotation={self.rotation.shape}, scaling={self.scaling.shape}, shs={self.shs.shape})"
 
@@ -230,7 +234,7 @@ class MLP(torch.nn.Module):
         n_neurons: int = 128,
         n_hidden_layers: int = 2,
         activation: str = "silu",
-        output_activation = "silu",
+        output_activation = None,
         bias: bool = True,
     ):
         super().__init__()
@@ -252,8 +256,6 @@ class MLP(torch.nn.Module):
                 n_neurons, dim_out, is_first=False, is_last=True, bias=bias
             )
         ]
-        if output_activation is not None:
-            layers.append(self.make_activation(output_activation))
         self.layers = torch.nn.Sequential(*layers)
 
     def forward(self, x):
@@ -312,7 +314,7 @@ class GaussianDecoder(torch.nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.2)
+                v = torch.clamp(v, min=0, max=0.02)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
@@ -320,7 +322,7 @@ class GaussianDecoder(torch.nn.Module):
                     v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
-                v = torch.tanh(v)
+                v = torch.tanh(v * 0.1) * 0.6
             ret[k] = v
 
         return GaussianModel(**ret)
@@ -397,15 +399,16 @@ class Generator(torch.nn.Module):
     ):
         super().__init__()
         self.z_dim = z_dim
-        self.c_dim = c_dim
+        self.c_dim = 0
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=64, img_channels=128, **synthesis_kwargs)
+        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=128, img_channels=64, **synthesis_kwargs)
         self.num_ws = self.synthesis.num_ws
-        self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
+        self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=0, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
-        ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+        temp = np.zeros([c.shape[0], 0], dtype=np.float32, device=c.device)
+        ws = self.mapping(z, temp, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
         img = self.synthesis(ws, c, update_emas=update_emas, **synthesis_kwargs)
         return img
