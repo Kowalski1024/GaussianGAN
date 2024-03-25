@@ -1,196 +1,153 @@
 import numpy as np
-from dataset import SyntheticDataset
-from torch.utils.data import DataLoader
 import torch
-from torchvision import transforms
-from model import Generator, Discriminator
-import PIL.Image
+
+from network.gan import ImageGenerator, Discriminator
+from network.loss import loss, discriminator_accuracy
+
+from utils import (
+    generate_noise,
+    save_image_grid,
+    load_sphere,
+    get_dataloader,
+    get_dataset,
+    get_optimizers,
+)
+import wandb
+import hydra
+from pathlib import Path
 
 
-def pc_normalize(pc):
-    centroid = np.mean(pc, axis=0)
-    pc = pc - centroid
-    m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
-
-    return pc / m
-
-
-def load_sparse(path, points=4096):
-    ball = np.loadtxt(f"{path}/{points}.xyz")
-    return pc_normalize(ball)
-
-
-def data_loader(path, batch_size=32):
-    transform = transforms.Compose([transforms.ToTensor()])
-
-    dataset = SyntheticDataset(path, transform=transform)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-
-    return loader
-
-
-def save_image_grid(img, fname, drange, grid_size):
-    lo, hi = drange
-    img = np.asarray(img, dtype=np.float32)
-    img = (img - lo) * (255 / (hi - lo))
-    img = np.rint(img).clip(0, 255).astype(np.uint8)
-
-    gw, gh = grid_size
-    _N, C, H, W = img.shape
-    img = img.reshape([gh, gw, C, H, W])
-    img = img.transpose(0, 3, 1, 4, 2)
-    img = img.reshape([gh * H, gw * W, C])
-
-    assert C in [1, 3]
-    if C == 1:
-        PIL.Image.fromarray(img[:, :, 0], "L").save(fname)
-    if C == 3:
-        PIL.Image.fromarray(img, "RGB").save(fname)
-
-
-def pre_train_generator(
-    generator, ball, optimizer, loader, epochs=10, device="cuda", batch_size=32
-):
-    generator.train()
-    points = ball.shape[1]
-    noise = torch.randn(1, 128).to(device)
-    noise = noise.unsqueeze(1).expand(batch_size, points, -1)
-
-    for epoch in range(epochs):
-        for i, (real_images, camera) in enumerate(loader):
-            real_images, camera = real_images.to(device), camera.to(device)
-
-            optimizer.zero_grad()
-            fake_images = generator(ball, noise, camera)
-            loss = torch.nn.functional.l1_loss(fake_images, real_images)
-            loss.backward()
-            optimizer.step()
-
-            if i % 10 == 0:
-                print(f"Epoch {epoch}, iter {i}, loss: {loss.item()}")
-
-        images = torch.cat([fake_images, real_images], dim=0)
-        save_image_grid(
-            images.detach().cpu().numpy(),
-            f"imgs/pretrain_{epoch}.png",
-            drange=[-1, 1],
-            grid_size=(4, 4),
-        )
-
-    return generator
-
-
-def compute_gradient_penalty(D, real_samples, fake_samples, device="cuda"):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    alpha = torch.Tensor(np.random.random((real_samples.size(0), 1, 1, 1))).to(device)
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(
-        True
-    )
-    d_interpolates = D(interpolates)
-    fake = torch.Tensor(real_samples.shape[0], 1).fill_(1.0).to(device)
-    fake = fake.squeeze(1)  # remove the second dimension of 'fake'
-    gradients = torch.autograd.grad(
-        outputs=d_interpolates,
-        inputs=interpolates,
-        grad_outputs=fake,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True,
-    )[0]
-    gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
-
-
-def train(
+def train_one_tick(
     generator,
     discriminator,
-    ball,
+    sphere,
     optimizer_g,
     optimizer_d,
     loader,
-    epochs=10,
-    device="cuda",
-    batch_size=32,
+    device,
+    tick,
+    config,
 ):
     generator.train()
     discriminator.train()
-    points = ball.shape[1]
-    noise = torch.normal(0, 0.2, (batch_size, 128)).to(device)
-    noise = noise.view(batch_size, 1, 128).expand(-1, points, -1)
+    B, P, _ = sphere.shape
 
-    for epoch in range(epochs):
-        for i, (real_images, camera) in enumerate(loader):
-            real_images, camera = real_images.to(device), camera.to(device)
+    loader_iter = iter(loader)
 
-            # Train the discriminator
-            optimizer_d.zero_grad()
-            fake_images = generator(ball, noise, camera)
-            real_output = discriminator(real_images)
-            fake_output = discriminator(fake_images.detach())
-            loss_d = -torch.mean(
-                torch.log(real_output + 1e-8) + torch.log(1 - fake_output + 1e-8)
-            )
-            loss_d.backward()
-            optimizer_d.step()
+    for i in range(config.train.batches_per_tick):
+        noise = generate_noise(B, P).to(device)
+        sphere = sphere.to(device)
+        real_images, camera = next(loader_iter)
+        real_images, camera = real_images.to(device), camera.to(device)
 
-            # Train the generator
-            optimizer_g.zero_grad()
-            fake_output = discriminator(fake_images)
-            loss_g = -torch.mean(torch.log(fake_output + 1e-8))
-            loss_g.backward()
-            optimizer_g.step()
+        fake_images = generator(sphere, noise)
+        real_logits = discriminator(real_images)
+        fake_logits = discriminator(fake_images.detach())
 
-            if i % 10 == 0:
-                print(
-                    f"Epoch {epoch}, iter {i}, loss_d: {loss_d.item()}, loss_g: {loss_g.item()}"
-                )
+        optimizer_d.zero_grad()
+        d_loss = loss(real_logits, fake_logits, "discriminator", **config.train.loss)
+        d_loss.backward()
+        optimizer_d.step()
 
-        # torch.save(generator.state_dict(), f"generator_{epoch}.pt")
-        # torch.save(discriminator.state_dict(), f"discriminator_{epoch}.pt")
-        images = torch.cat([fake_images[:8], real_images[:8]], dim=0)
-        save_image_grid(
-            images.detach().cpu().numpy(),
-            f"imgs/output_{epoch}.png",
-            drange=[-1, 1],
-            grid_size=(4, 4),
+        fake_logits = discriminator(fake_images)
+        optimizer_g.zero_grad()
+        g_loss = loss(real_logits, fake_logits, "generator", **config.train.loss)
+        g_loss.backward()
+        optimizer_g.step()
+
+        real_accuracy, fake_accuracy = discriminator_accuracy(real_logits, fake_logits)
+        wandb.log(
+            {
+                "d_loss": d_loss.item(),
+                "g_loss": g_loss.item(),
+                "real_accuracy": real_accuracy,
+                "fake_accuracy": fake_accuracy,
+                "tick": tick,
+                "iter": i,
+            }
         )
 
-    return generator, discriminator
+        if i % 10 == 0:
+            print(
+                f"Tick {tick}, Iter {i}, D loss: {d_loss.item()}, G loss: {g_loss.item()}, Real acc: {real_accuracy}, Fake acc: {fake_accuracy}"
+            )
+
+    if not tick % config.train.save_images_every:
+        images = int(B**0.5)
+        save_image_grid(
+            fake_images[: images**2].detach().cpu().numpy(),
+            f"{config.output_dir}/output_{tick}.png",
+            drange=[-1, 1],
+            grid_size=(images, images),
+        )
 
 
-def main():
-    points = 4096
-    batch_size = 8
-    ball = load_sparse("balls", points)
-    ball = torch.tensor(ball, dtype=torch.float32).cuda()
-    ball = ball.unsqueeze(0).expand(batch_size, -1, -1)
-    loader = data_loader(
-        "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars_train/car1",
-        batch_size=batch_size,
+def train(
+    generator, discriminator, optimizer_g, optimizer_d, sphere, loader, device, config
+):
+    real_images, _ = next(iter(loader))
+    images = int(config.dataloader.batch_size**0.5)
+    save_image_grid(
+        real_images[: images**2].detach().cpu().numpy(),
+        f"{config.output_dir}/real_images.png",
+        drange=[-1, 1],
+        grid_size=(images, images),
+    )
+    
+    for tick in range(config.train.ticks):
+        train_one_tick(
+            generator,
+            discriminator,
+            sphere,
+            optimizer_g,
+            optimizer_d,
+            loader,
+            device,
+            tick,
+            config,
+        )
+
+
+@hydra.main(config_path="config", config_name="config.yaml", version_base="1.2")
+def main(config):
+    hydra_output_dir = Path(
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    )
+    config.output_dir = hydra_output_dir
+    device = torch.device(config.device)
+
+    # Load the sphere
+    sphere = load_sphere(config.sphere.path, config.sphere.points)
+    sphere = torch.tensor(sphere, dtype=torch.float32).to(device)
+    sphere = sphere.unsqueeze(0).expand(config.dataloader.batch_size, -1, -1)
+
+    # Create the data loader
+    dataset = get_dataset(config.dataset.type, config.dataset.params)
+    loader = get_dataloader(
+        dataset,
+        **config.dataloader,
     )
 
-    # Instantiate the generator and the discriminator
-    generator = Generator(points, 20, 128).cuda()
-    discriminator = (
-        Discriminator().cuda()
-    )  # Assuming Discriminator is defined elsewhere
+    # Create the generator and the discriminator
+    generator = ImageGenerator(**config.generator.model).to(device)
+    discriminator = Discriminator().to(device)
 
-    # Create separate optimizers for the generator and the discriminator
-    optimizer_g = torch.optim.AdamW(generator.parameters(), lr=1e-3)
-    optimizer_d = torch.optim.AdamW(discriminator.parameters(), lr=1e-4)
+    # Create the optimizer
+    optimizer_g = get_optimizers(generator, config.generator.optimizer)
+    optimizer_d = get_optimizers(discriminator, config.discriminator.optimizer)
 
-    # Train the GAN
-    # pre_train_generator(generator, ball, optimizer_g, loader, epochs=1, batch_size=batch_size)
+    wandb.init(project="3d-gan", mode="disabled")
+
+    # Train the model
     train(
         generator,
         discriminator,
-        ball,
         optimizer_g,
         optimizer_d,
+        sphere,
         loader,
-        epochs=50,
-        batch_size=batch_size,
+        device,
+        config,
     )
 
 

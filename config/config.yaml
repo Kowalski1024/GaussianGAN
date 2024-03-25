@@ -1,0 +1,41 @@
+output_dir: outputs
+device: cuda
+
+train:
+  ticks: 100
+  batches_per_tick: 8
+  save_images_every: 2
+
+  loss:
+    type: wgan
+    noise_label: True
+
+sphere:
+  path: "spheres"
+  points: 1024
+
+dataset:
+  type: synthetic
+  params:
+    path: datasets/cars_train.zip
+
+dataloader:
+  batch_size: 16
+  num_workers: 4
+  pin_memory: True
+
+generator:
+  model:
+    k_neighbors: 20
+    z_dim: 128
+
+  optimizer:
+    type: adamw
+    params:
+      lr: 0.001
+
+discriminator:
+  optimizer:
+    type: sgd
+    params:
+      lr: 0.001

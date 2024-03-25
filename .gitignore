@@ -7,4 +7,4 @@ training-runs/*
 run.sh
 datasets/*
 outputs/*
-balls/*
+wandb/*
