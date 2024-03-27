@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from knn_cuda import KNN
-from pointnet2_ops.pointnet2_utils import grouping_operation
+
+try:
+    from pointnet2_ops.pointnet2_utils import grouping_operation
+except ImportError:
+    grouping_operation = None    
 
 
 class Attention(nn.Module):
@@ -17,7 +20,7 @@ class Attention(nn.Module):
 
         self.gamma = nn.Parameter(torch.tensor(0.0), requires_grad=True)
 
-    def forward(self, x, y=None):
+    def forward(self, x):
         # Apply convs
         theta = self.theta(x)
         phi = self.phi(x)
@@ -38,22 +41,41 @@ class EdgeFeature(nn.Module):
         edge features: (batch_size,num_dims,num_points,k)
     """
 
-    def __init__(self, k=16):
+    def __init__(self, k=16, use_pointnet=False):
         super(EdgeFeature, self).__init__()
-        self.KNN = KNN(k=k + 1, transpose_mode=False)
         self.k = k
+        self.use_pointnet = use_pointnet and grouping_operation is not None
 
     def forward(self, point_cloud):
         B, dims, N = point_cloud.shape
 
         # batched pair-wise distance
-        _, idx = self.KNN(point_cloud, point_cloud)
-        idx = idx[:, 1:, :].contiguous()
+        xt = point_cloud.permute(0, 2, 1)
+        xi = -2 * torch.bmm(xt, point_cloud)
+        xs = torch.sum(xt**2, dim=2, keepdim=True)
+        xst = xs.permute(0, 2, 1)
+        dist = xi + xs + xst # [B, N, N]
+
+        # get k NN id
+        _, idx_o = torch.topk(dist, self.k+1, dim=2, largest=False)
+        idx = idx_o[: ,: ,1:] # [B, N, k]
+        idx = idx.contiguous().view(B, N*self.k)
 
         # gather
-        neighbors = grouping_operation(point_cloud, idx.contiguous().int()).permute(
-            0, 1, 3, 2
-        )
+        if self.use_pointnet:
+            neighbors = grouping_operation(point_cloud, idx.contiguous().int())
+            neighbors = neighbors.permute(0, 1, 3, 2)
+        else:
+            idx = idx.view(B, -1)  # [B, N*k]
+            neighbors = []
+            for b in range(B):
+                tmp = torch.index_select(
+                    point_cloud[b], 1, idx[b]
+                )  # [d, N*k] <- [d, N], 0, [N*k]
+                tmp = tmp.view(dims, N, self.k)
+                neighbors.append(tmp)
+
+            neighbors = torch.stack(neighbors)  # [B, d, N, k]
 
         # centralize
         central = point_cloud.unsqueeze(3)  # [B, d, N, 1]
@@ -66,7 +88,7 @@ class EdgeFeature(nn.Module):
 
 
 class AdaptivePointNorm(nn.Module):
-    def __init__(self, in_channel, style_dim, use_eql=False):
+    def __init__(self, in_channel, style_dim):
         super().__init__()
         Conv = nn.Conv1d  # EqualConv1d
 
