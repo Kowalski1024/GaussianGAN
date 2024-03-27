@@ -25,6 +25,8 @@ from torch_utils.ops import grid_sample_gradfix
 
 import legacy
 from metrics import metric_main
+import wandb
+import datetime
 
 #----------------------------------------------------------------------------
 
@@ -49,7 +51,8 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
             label_groups[label].append(idx)
 
         # Reorder.
-        label_order = sorted(label_groups.keys())
+        label_order = list(label_groups.keys())
+        rnd.shuffle(label_order)
         for label in label_order:
             rnd.shuffle(label_groups[label])
 
@@ -120,15 +123,17 @@ def training_loop(
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
+    args = None,
+    run_name = None
 ):
     image_snapshot_ticks = 2
-    network_snapshot_ticks = 15
+    network_snapshot_ticks = 100
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
     np.random.seed(random_seed * num_gpus + rank)
     torch.manual_seed(random_seed * num_gpus + rank)
-    torch.backends.cudnn.benchmark = cudnn_benchmark    # Improves training speed.
+    torch.backends.cudnn.benchmark = True    # Improves training speed.
     torch.backends.cuda.matmul.allow_tf32 = False       # Improves numerical accuracy.
     torch.backends.cudnn.allow_tf32 = False             # Improves numerical accuracy.
     conv2d_gradfix.enabled = True                       # Improves training speed.
@@ -162,6 +167,9 @@ def training_loop(
             resume_data = legacy.load_network_pkl(f)
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
             misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
+
+    current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    wandb.init(project="style-gan", config=dict(args), name=f"{run_name}_{current_date}")
 
     # Print network summary tables.
     # if rank == 0:
@@ -253,6 +261,9 @@ def training_loop(
     batch_idx = 0
     if progress_fn is not None:
         progress_fn(0, total_kimg)
+
+    single_value = torch.randn(1).item()
+
     while True:
 
         # Fetch training data.
@@ -358,21 +369,21 @@ def training_loop(
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
-        if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
-            snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
-            for key, value in snapshot_data.items():
-                if isinstance(value, torch.nn.Module):
-                    value = copy.deepcopy(value).eval().requires_grad_(False)
-                    if num_gpus > 1:
-                        misc.check_ddp_consistency(value, ignore_regex=r'.*\.[^.]+_(avg|ema)')
-                        for param in misc.params_and_buffers(value):
-                            torch.distributed.broadcast(param, src=0)
-                    snapshot_data[key] = value.cpu()
-                del value # conserve memory
-            snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
-            if rank == 0:
-                with open(snapshot_pkl, 'wb') as f:
-                    pickle.dump(snapshot_data, f)
+        # if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
+        #     snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
+        #     for key, value in snapshot_data.items():
+        #         if isinstance(value, torch.nn.Module):
+        #             value = copy.deepcopy(value).eval().requires_grad_(False)
+        #             if num_gpus > 1:
+        #                 misc.check_ddp_consistency(value, ignore_regex=r'.*\.[^.]+_(avg|ema)')
+        #                 for param in misc.params_and_buffers(value):
+        #                     torch.distributed.broadcast(param, src=0)
+        #             snapshot_data[key] = value.cpu()
+        #         del value # conserve memory
+        #     snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
+        #     if rank == 0:
+        #         with open(snapshot_pkl, 'wb') as f:
+        #             pickle.dump(snapshot_data, f)
 
         # Evaluate metrics.
         # if (snapshot_data is not None) and (len(metrics) > 0):
@@ -385,7 +396,6 @@ def training_loop(
         #             metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
         #         stats_metrics.update(result_dict.results)
         del snapshot_data # conserve memory
-        print('!!!')
 
         # Collect statistics.
         for phase in phases:
@@ -396,6 +406,11 @@ def training_loop(
             training_stats.report0('Timing/' + phase.name, value)
         stats_collector.update()
         stats_dict = stats_collector.as_dict()
+
+        metrics_ = {}
+        for key, val in stats_dict.items():
+            metrics_[key] = val["mean"]
+        wandb.log(metrics_)
 
         # Update logs.
         timestamp = time.time()

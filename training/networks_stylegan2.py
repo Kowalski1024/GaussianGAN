@@ -19,6 +19,8 @@ from torch_utils.ops import conv2d_resample
 from torch_utils.ops import upfirdn2d
 from torch_utils.ops import bias_act
 from torch_utils.ops import fma
+from torch import nn
+from typing import NamedTuple, Tuple
 
 #----------------------------------------------------------------------------
 
@@ -376,6 +378,7 @@ class SynthesisBlock(torch.nn.Module):
         fused_modconv_default   = True,         # Default value of fused_modconv. 'inference_only' = True for inference, False for training.
         **layer_kwargs,                         # Arguments for SynthesisLayer.
     ):
+        conv_clamp = None
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
         self.in_channels = in_channels
@@ -462,6 +465,217 @@ class SynthesisBlock(torch.nn.Module):
         return f'resolution={self.resolution:d}, architecture={self.architecture:s}'
 
 #----------------------------------------------------------------------------
+def getProjectionMatrix(znear, zfar, fovX, fovY):
+    bath_size = fovX.shape[0]
+    tanHalfFovY = torch.tan((fovY / 2))
+    tanHalfFovX = torch.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = torch.zeros((bath_size, 4, 4), device=fovX.device)
+
+    z_sign = 1.0
+
+    P[:, 0, 0] = 2.0 * znear / (right - left)
+    P[:, 1, 1] = 2.0 * znear / (top - bottom)
+    P[:, 0, 2] = (right + left) / (right - left)
+    P[:, 1, 2] = (top + bottom) / (top - bottom)
+    P[:, 3, 2] = z_sign
+    P[:, 2, 2] = z_sign * zfar / (zfar - znear)
+    P[:, 2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
+
+def extract_camera_info(camera_to_world, intrinsics):
+    # camera_to_world = camera_to_world.clone()
+    # camera_to_world[:, :3, 1:3] = camera_to_world[:, :3, 1:3] * -1
+    w2c = torch.inverse(camera_to_world)
+
+    # Extract FoVx and FoVy from intrinsics matrix
+    FoVx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
+    FoVy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
+
+    world_view_transform = w2c.transpose(-2, -1)
+    zfar = 100.0
+    znear = 0.01
+
+    # Calculate projection matrix
+    projection_matrix = getProjectionMatrix(znear, zfar, FoVx, FoVy).transpose(-2, -1)
+
+    full_proj_transform = torch.bmm(world_view_transform, projection_matrix)
+    camera_center = torch.inverse(world_view_transform)[:, 3, :3]
+    return FoVx, FoVy, camera_center, world_view_transform, full_proj_transform
+
+inverse_sigmoid = lambda x: np.log(x / (1 - x))
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        dim_in: int,
+        dim_out: int,
+        n_neurons: int = 128,
+        n_hidden_layers: int = 2,
+        activation: str = "silu",
+        output_activation = None,
+        bias: bool = True,
+    ):
+        super().__init__()
+        layers = [
+            self.make_linear(
+                dim_in, n_neurons, is_first=True, is_last=False, bias=bias
+            ),
+            self.make_activation(activation),
+        ]
+        for i in range(n_hidden_layers - 1):
+            layers += [
+                self.make_linear(
+                    n_neurons, n_neurons, is_first=False, is_last=False, bias=bias
+                ),
+                self.make_activation(activation),
+            ]
+        layers += [
+            self.make_linear(
+                n_neurons, dim_out, is_first=False, is_last=True, bias=bias
+            )
+        ]
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.layers(x)
+        return x
+
+    def make_linear(self, dim_in, dim_out, is_first, is_last, bias=True):
+        layer = nn.Linear(dim_in, dim_out, bias=bias)
+        return layer
+
+    def make_activation(self, activation):
+        if activation == "relu":
+            return nn.ReLU(inplace=True)
+        elif activation == "silu":
+            return nn.SiLU(inplace=True)
+        else:
+            raise NotImplementedError
+
+
+class _TruncExp(torch.autograd.Function):  # pylint: disable=abstract-method
+    # Implementation from torch-ngp:
+    # https://github.com/ashawkey/torch-ngp/blob/93b08a0d4ec1cc6e69d85df7f0acdfb99603b628/activation.py
+    @staticmethod
+    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, x):  # pylint: disable=arguments-differ
+        ctx.save_for_backward(x)
+        return torch.exp(x)
+
+    @staticmethod
+    @torch.cuda.amp.custom_bwd
+    def backward(ctx, g):  # pylint: disable=arguments-differ
+        x = ctx.saved_tensors[0]
+        return g * torch.exp(torch.clamp(x, max=15))
+
+
+trunc_exp = _TruncExp.apply
+
+
+class GaussianModel(NamedTuple):
+    xyz: torch.Tensor
+    opacity: torch.Tensor
+    rotation: torch.Tensor
+    scaling: torch.Tensor
+    shs: torch.Tensor
+
+    def construct_list_of_attributes(self):
+        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        features_dc = self.shs[:, :1]
+        features_rest = self.shs[:, 1:]
+        for i in range(features_dc.shape[1]*features_dc.shape[2]):
+            l.append('f_dc_{}'.format(i))
+        for i in range(features_rest.shape[1]*features_rest.shape[2]):
+            l.append('f_rest_{}'.format(i))
+        l.append('opacity')
+        for i in range(self.scaling.shape[1]):
+            l.append('scale_{}'.format(i))
+        for i in range(self.rotation.shape[1]):
+            l.append('rot_{}'.format(i))
+        return l
+
+    # def save_ply(self, path):
+        
+    #     xyz = self.xyz.detach().cpu().numpy()
+    #     normals = np.zeros_like(xyz)
+    #     features_dc = self.shs[:, :1]
+    #     features_rest = self.shs[:, 1:]
+    #     f_dc = features_dc.detach().flatten(start_dim=1).contiguous().cpu().numpy()
+    #     f_rest = features_rest.detach().flatten(start_dim=1).contiguous().cpu().numpy()
+    #     opacities = inverse_sigmoid(torch.clamp(self.opacity, 1e-3, 1 - 1e-3).detach().cpu().numpy())
+    #     scale = np.log(self.scaling.detach().cpu().numpy())
+    #     rotation = self.rotation.detach().cpu().numpy()
+
+    #     dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+
+    #     elements = np.empty(xyz.shape[0], dtype=dtype_full)
+    #     attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+    #     elements[:] = list(map(tuple, attributes))
+    #     el = PlyElement.describe(elements, 'vertex')
+    #     PlyData([el]).write(path)
+
+
+class GSLayer(torch.nn.Module):
+    feature_channels = {
+        "scaling": 1,
+        "rotation": 3,
+        "opacity": 1,
+        "shs": 3,
+        "xyz": 3
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.out_layers = torch.nn.ModuleList()
+        for key, out_ch in self.feature_channels.items():
+            layer = torch.nn.Linear(128, out_ch)
+
+            if key == "scaling":
+                torch.nn.init.constant_(layer.bias, -5.0)
+            elif key == "rotation":
+                torch.nn.init.constant_(layer.bias, 0)
+                torch.nn.init.constant_(layer.bias[0], 1.0)
+            elif key == "opacity":
+                torch.nn.init.constant_(layer.bias, inverse_sigmoid(0.1))
+
+            self.out_layers.append(layer)
+
+    def forward(self, x):
+        ret = {}
+        x = x
+        for k, layer in zip(self.feature_channels.keys(), self.out_layers):
+            v = layer(x)
+            if k == "rotation":
+                v = torch.nn.functional.normalize(v)
+            elif k == "scaling":
+                v = trunc_exp(v)
+                v = torch.clamp(v, min=0, max=0.2)
+            elif k == "opacity":
+                v = torch.sigmoid(v)
+            elif k == "shs":
+                v = torch.sigmoid(v)
+                v = torch.reshape(v, (v.shape[0], -1, 3))
+            ret[k] = v.contiguous()
+
+        return GaussianModel(**ret)
+
+
+class GaussianDecoder(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mlp = MLP(1024, 128)
+        self.gs = GSLayer()
+
+    def forward(self, hidden_features):
+        return self.gs(self.mlp(hidden_features.contiguous()).contiguous())
+
 
 @persistence.persistent_class
 class SynthesisNetwork(torch.nn.Module):
@@ -542,13 +756,13 @@ class Generator(torch.nn.Module):
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=128, img_channels=59, **synthesis_kwargs)
+        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
         self.num_ws = self.synthesis.num_ws
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
         ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
-        img = self.synthesis(ws, c, update_emas=update_emas, **synthesis_kwargs)
+        img = self.synthesis(ws, update_emas=update_emas, **synthesis_kwargs)
         return img
 
 #----------------------------------------------------------------------------

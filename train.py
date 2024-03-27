@@ -44,7 +44,7 @@ def subprocess_fn(rank, c, temp_dir):
         custom_ops.verbosity = 'none'
 
     # Execute training loop.
-    training_loop.training_loop(rank=rank, **c)
+    training_loop.training_loop(rank=rank, args=c, **c)
 
 #----------------------------------------------------------------------------
 
@@ -101,7 +101,7 @@ def launch_training(c, desc, outdir, dry_run):
 
 def init_dataset_kwargs(data):
     try:
-        dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
+        dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.CarsDataset', path=data, use_labels=True, max_size=None, xflip=False)
         dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs) # Subclass of training.dataset.Dataset.
         dataset_kwargs.resolution = dataset_obj.resolution # Be explicit about resolution.
         dataset_kwargs.use_labels = dataset_obj.has_labels # Be explicit about labels.
@@ -160,6 +160,7 @@ def parse_comma_separated_list(s):
 @click.option('--nobench',      help='Disable cuDNN benchmarking', metavar='BOOL',              type=bool, default=False, show_default=True)
 @click.option('--workers',      help='DataLoader worker processes', metavar='INT',              type=click.IntRange(min=1), default=3, show_default=True)
 @click.option('-n','--dry-run', help='Print training options and exit',                         is_flag=True)
+@click.option('--name',  type=str)
 
 def main(**kwargs):
     """Train a GAN using the techniques described in the paper
@@ -187,10 +188,10 @@ def main(**kwargs):
     # Initialize config.
     opts = dnnlib.EasyDict(kwargs) # Command line arguments.
     c = dnnlib.EasyDict() # Main config dict.
-    c.G_kwargs = dnnlib.EasyDict(class_name=None, z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict())
+    c.G_kwargs = dnnlib.EasyDict(class_name=None, z_dim=512, w_dim=128, mapping_kwargs=dnnlib.EasyDict())
     c.D_kwargs = dnnlib.EasyDict(class_name='training.networks_stylegan2.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
-    c.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', betas=[0,0.99], eps=1e-8)
-    c.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', betas=[0,0.99], eps=1e-8)
+    c.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0,0.99], eps=1e-8)
+    c.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0,0.99], eps=1e-8)
     c.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss')
     c.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, prefetch_factor=2)
 
@@ -202,6 +203,7 @@ def main(**kwargs):
     c.training_set_kwargs.xflip = opts.mirror
 
     # Hyperparameters & settings.
+    c.run_name = opts.name
     c.num_gpus = opts.gpus
     c.batch_size = opts.batch
     c.batch_gpu = opts.batch_gpu or opts.batch // opts.gpus
@@ -233,14 +235,14 @@ def main(**kwargs):
     # Base configuration.
     c.ema_kimg = c.batch_size * 10 / 32
     if opts.cfg == 'stylegan2':
-        c.G_kwargs.class_name = 'training.gaussian.Generator'
+        c.G_kwargs.class_name = 'training.v2.gan.Generator'
         c.loss_kwargs.style_mixing_prob = 0.9 # Enable style mixing regularization.
         c.loss_kwargs.pl_weight = 2 # Enable path length regularization.
         c.G_reg_interval = 4 # Enable lazy regularization for G.
         c.G_kwargs.fused_modconv_default = 'inference_only' # Speed up training by using regular convolutions instead of grouped convolutions.
         c.loss_kwargs.pl_no_weight_grad = True # Speed up path length regularization by skipping gradient computation wrt. conv2d weights.
     else:
-        c.G_kwargs.class_name = 'training.gaussian.Generator'
+        c.G_kwargs.class_name = 'training.networks_stylegan3.Generator'
         c.G_kwargs.magnitude_ema_beta = 0.5 ** (c.batch_size / (20 * 1e3))
         if opts.cfg == 'stylegan3-r':
             c.G_kwargs.conv_kernel = 1 # Use 1x1 convolutions.
