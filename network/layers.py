@@ -2,11 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-try:
-    from pointnet2_ops.pointnet2_utils import grouping_operation
-except ImportError:
-    grouping_operation = None    
-
 
 class Attention(nn.Module):
     def __init__(self, channels):
@@ -41,41 +36,32 @@ class EdgeFeature(nn.Module):
         edge features: (batch_size,num_dims,num_points,k)
     """
 
-    def __init__(self, k=16, use_pointnet=False):
+    def __init__(self, k=16):
         super(EdgeFeature, self).__init__()
         self.k = k
-        self.use_pointnet = use_pointnet and grouping_operation is not None
 
     def forward(self, point_cloud):
         B, dims, N = point_cloud.shape
 
         # batched pair-wise distance
         xt = point_cloud.permute(0, 2, 1)
-        xi = -2 * torch.bmm(xt, point_cloud)
-        xs = torch.sum(xt**2, dim=2, keepdim=True)
-        xst = xs.permute(0, 2, 1)
-        dist = xi + xs + xst # [B, N, N]
+        dist = torch.cdist(xt, xt, p=2)  # [B, N, N]
 
         # get k NN id
         _, idx_o = torch.topk(dist, self.k+1, dim=2, largest=False)
         idx = idx_o[: ,: ,1:] # [B, N, k]
-        idx = idx.contiguous().view(B, N*self.k)
+        idx = idx.contiguous().view(B, -1)
 
         # gather
-        if self.use_pointnet:
-            neighbors = grouping_operation(point_cloud, idx.contiguous().int())
-            neighbors = neighbors.permute(0, 1, 3, 2)
-        else:
-            idx = idx.view(B, -1)  # [B, N*k]
-            neighbors = []
-            for b in range(B):
-                tmp = torch.index_select(
-                    point_cloud[b], 1, idx[b]
-                )  # [d, N*k] <- [d, N], 0, [N*k]
-                tmp = tmp.view(dims, N, self.k)
-                neighbors.append(tmp)
+        neighbors = []
+        for b in range(B):
+            tmp = torch.index_select(
+                point_cloud[b], 1, idx[b]
+            )  # [d, N*k] <- [d, N], 0, [N*k]
+            tmp = tmp.view(dims, N, -1)
+            neighbors.append(tmp)
 
-            neighbors = torch.stack(neighbors)  # [B, d, N, k]
+        neighbors = torch.stack(neighbors)  # [B, d, N, k]
 
         # centralize
         central = point_cloud.unsqueeze(3)  # [B, d, N, 1]
@@ -106,7 +92,7 @@ class AdaptivePointNorm(nn.Module):
         gamma, beta = style.chunk(2, 1)
 
         out = self.norm(input)
-        out = gamma * out + beta
+        out = (gamma * out).add_(beta)
 
         return out
 

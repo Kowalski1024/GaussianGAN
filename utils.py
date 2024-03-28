@@ -7,9 +7,7 @@ import PIL.Image
 import numpy as np
 
 
-def get_optimizers(
-    model: nn.Module, config: dict
-) -> torch.optim.Optimizer:
+def get_optimizers(model: nn.Module, config: dict) -> torch.optim.Optimizer:
     optimizer_type = config.type
     params = config.params
 
@@ -70,8 +68,8 @@ def get_dataloader(
 
 
 def generate_noise(batch_size, points, std=0.2, z_dim=128):
-    noise = torch.normal(0, std, (batch_size, z_dim))
-    return noise.unsqueeze(1).expand(-1, points, -1)
+    noise = torch.normal(mean=0., std=std, size=(batch_size, 1, z_dim))
+    return noise.repeat(1, points, 1)
 
 
 def pc_normalize(pc):

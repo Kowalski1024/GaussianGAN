@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from network.gan import ImageGenerator, Discriminator
-from network.loss import loss, discriminator_accuracy
+from network.loss import loss, discriminator_accuracy, calculate_gradient_penalty
 
 from utils import (
     generate_noise,
@@ -35,19 +35,35 @@ def train_one_tick(
     loader_iter = iter(loader)
 
     for i in range(config.train.batches_per_tick):
-        noise = generate_noise(B, P).to(device)
         sphere = sphere.to(device)
-        real_images, camera = next(loader_iter)
-        real_images, camera = real_images.to(device), camera.to(device)
 
+        for _ in range(config.train.discriminator_steps):
+            noise = generate_noise(B, P).to(device)
+            real_images, camera = next(loader_iter)
+            real_images, camera = real_images.to(device), camera.to(device)
+
+            with torch.no_grad():
+                fake_images = generator(sphere, noise)
+
+            optimizer_d.zero_grad()
+            real_logits = discriminator(real_images)
+            fake_logits = discriminator(fake_images)
+
+            d_loss = loss(real_logits, fake_logits, "discriminator", **config.train.loss)
+
+            if config.train.loss.type == "wgan-gp":
+                gp = calculate_gradient_penalty(discriminator, real_images, fake_images, device)
+                d_loss = d_loss + config.train.loss.lambda_gp * gp
+
+            d_loss.backward()
+            optimizer_d.step()
+
+            if config.train.loss.type == "wgan":
+                for p in discriminator.parameters():
+                    p.data.clamp_(-config.train.weight_clip, config.train.weight_clip)
+
+        noise = generate_noise(B, P).to(device)
         fake_images = generator(sphere, noise)
-        real_logits = discriminator(real_images)
-        fake_logits = discriminator(fake_images.detach())
-
-        optimizer_d.zero_grad()
-        d_loss = loss(real_logits, fake_logits, "discriminator", **config.train.loss)
-        d_loss.backward()
-        optimizer_d.step()
 
         fake_logits = discriminator(fake_images)
         optimizer_g.zero_grad()
@@ -93,7 +109,7 @@ def train(
         drange=[-1, 1],
         grid_size=(images, images),
     )
-    
+
     for tick in range(config.train.ticks):
         train_one_tick(
             generator,
@@ -119,7 +135,7 @@ def main(config):
     # Load the sphere
     sphere = load_sphere(config.sphere.path, config.sphere.points)
     sphere = torch.tensor(sphere, dtype=torch.float32).to(device)
-    sphere = sphere.unsqueeze(0).expand(config.dataloader.batch_size, -1, -1)
+    sphere = sphere.unsqueeze(0).repeat(config.dataloader.batch_size, 1, 1)
 
     # Create the data loader
     dataset = get_dataset(config.dataset.type, config.dataset.params)

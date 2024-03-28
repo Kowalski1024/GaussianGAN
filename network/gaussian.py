@@ -2,9 +2,13 @@ import torch
 import torch.nn as nn
 from typing import NamedTuple
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gaussian_rasterization import (
+    GaussianRasterizationSettings,
+    GaussianRasterizer,
+)
 from network.camera import Camera
 import numpy as np
+
 
 class GaussianModel(NamedTuple):
     xyz: torch.Tensor = None
@@ -19,7 +23,7 @@ class GaussianModel(NamedTuple):
 
     def __repr__(self) -> str:
         return f"GaussianModel(xyz={self.xyz.shape}, opacity={self.opacity.shape}, rotation={self.rotation.shape}, scaling={self.scaling.shape}, shs={self.shs.shape})"
-    
+
 
 class GaussianDecoder(nn.Module):
     feature_channels = {"scaling": 3, "rotation": 4, "opacity": 1, "shs": 3, "xyz": 3}
@@ -29,11 +33,11 @@ class GaussianDecoder(nn.Module):
         super(GaussianDecoder, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(640, 128, 1),
-            nn.SiLU(),
+            nn.LeakyReLU(0.2),
             nn.Linear(128, 128, 1),
-            nn.SiLU(),
+            nn.LeakyReLU(0.02),
             nn.Linear(128, 128, 1),
-            nn.SiLU(),
+            nn.LeakyReLU(0.2),
         )
 
         self.decoders = torch.nn.ModuleList()
@@ -51,7 +55,7 @@ class GaussianDecoder(nn.Module):
 
             self.decoders.append(layer)
 
-    def forward(self, x):
+    def forward(self, x, pc=None):
         if self.mlp is not None:
             x = self.mlp(x)
 
@@ -70,11 +74,13 @@ class GaussianDecoder(nn.Module):
                     v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
-                v = torch.tanh(v * 0.1) * 0.35
+                if pc is not None:
+                    v = v + pc
+                v = torch.tanh(v) * 0.35
             ret[k] = v
 
         return GaussianModel(**ret)
-    
+
 
 class _TruncExp(torch.autograd.Function):  # pylint: disable=abstract-method
     # Implementation from torch-ngp:
@@ -95,15 +101,24 @@ class _TruncExp(torch.autograd.Function):  # pylint: disable=abstract-method
 trunc_exp = _TruncExp.apply
 
 
-def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor, scaling_modifier = 1.0, use_rgb=False):
+def render(
+    viewpoint_camera: Camera,
+    pc: GaussianModel,
+    bg_color: torch.Tensor,
+    scaling_modifier=1.0,
+    use_rgb=False,
+):
     """
-    Render the scene. 
-    
+    Render the scene.
+
     Background tensor (bg_color) must be on GPU!
     """
- 
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.xyz, dtype=pc.xyz.dtype, requires_grad=True, device="cuda") + 0
+    screenspace_points = (
+        torch.zeros_like(pc.xyz, dtype=pc.xyz.dtype, requires_grad=True, device="cuda")
+        + 0
+    )
     try:
         screenspace_points.retain_grad()
     except:
@@ -125,7 +140,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor
         sh_degree=3,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=False
+        debug=False,
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -151,15 +166,16 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor
     else:
         shs = pc.shs
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, _ = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        means3D=means3D,
+        means2D=means2D,
+        shs=shs,
+        colors_precomp=colors_precomp,
+        opacities=opacity,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp,
+    )
 
     return rendered_image * 2 - 1

@@ -23,6 +23,31 @@ def noisy_label(label, flip_probability=0.05):
     return label
 
 
+def calculate_gradient_penalty(discriminator, real_images, fake_images, device):
+    alpha = torch.rand(real_images.size(0), 1, 1, 1).to(device)
+    alpha = alpha.expand(real_images.size())
+
+    interpolates = alpha * real_images + (1 - alpha) * fake_images
+    interpolates = torch.autograd.Variable(interpolates, requires_grad=True).to(device)
+    fake = torch.autograd.Variable(
+        torch.ones(real_images.size(0), 1).to(device), requires_grad=False
+    )
+
+    disc_interpolates = discriminator(interpolates)
+    gradients = torch.autograd.grad(
+        outputs=disc_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
+
+
 def wgan_loss(real_logit, fake_logit, model_type):
     if model_type == "generator":
         return -torch.mean(fake_logit)
@@ -71,10 +96,18 @@ def ls_loss(real_logit, fake_logit, model_type, noise_label=False):
 
 
 def loss(
-    real_logit, fake_logit, model_type, type="wgan", weight=1.0, noise_label=False
+    real_logit,
+    fake_logit,
+    model_type,
+    type="wgan",
+    weight=1.0,
+    noise_label=False,
+    **kwargs,
 ):
     match type.lower():
         case "wgan":
+            loss = wgan_loss(real_logit, fake_logit, model_type)
+        case "wgan-gp":
             loss = wgan_loss(real_logit, fake_logit, model_type)
         case "hinge":
             loss = hinge_loss(real_logit, fake_logit, model_type)
