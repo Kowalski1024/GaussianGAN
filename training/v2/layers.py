@@ -1,12 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from knn_cuda import KNN
-
-try:
-    from pointnet2_ops.pointnet2_utils import grouping_operation
-except ImportError:
-    grouping_operation = None    
+import torch.nn.functional as F  
 
 
 class Attention(nn.Module):
@@ -44,9 +38,7 @@ class EdgeFeature(nn.Module):
 
     def __init__(self, k=16, use_pointnet=True):
         super(EdgeFeature, self).__init__()
-        self.KNN = KNN(k=k + 1, transpose_mode=False)
         self.k = k
-        self.use_pointnet = use_pointnet and grouping_operation is not None
 
     def forward(self, point_cloud):
         B, dims, N = point_cloud.shape

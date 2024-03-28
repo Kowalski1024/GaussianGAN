@@ -27,6 +27,7 @@ class GaussianDecoder(nn.Module):
 
     def __init__(self):
         super(GaussianDecoder, self).__init__()
+        self.use_pc = True
         self.mlp = nn.Sequential(
             nn.Linear(640, 128, 1),
             nn.SiLU(),
@@ -51,7 +52,7 @@ class GaussianDecoder(nn.Module):
 
             self.decoders.append(layer)
 
-    def forward(self, x):
+    def forward(self, x, pc):
         if self.mlp is not None:
             x = self.mlp(x)
 
@@ -70,7 +71,8 @@ class GaussianDecoder(nn.Module):
                     v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
-                v = torch.tanh(v * 0.1) * 0.4
+                v = v + pc if self.use_pc else v
+                v = torch.tanh(v) * 0.4
             ret[k] = v
 
         return GaussianModel(**ret)

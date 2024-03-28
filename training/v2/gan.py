@@ -101,9 +101,9 @@ def load_sphere(path, points=4096):
 
 
 class ImageGenerator(nn.Module):
-    def __init__(self):
+    def __init__(self, attention=False, blocks=3, **kwargs):
         super(ImageGenerator, self).__init__()
-        self.gaussians = GaussiansGenerator(20, 128, False, False)
+        self.gaussians = GaussiansGenerator(20, 128, False, attention, blocks)
         self.decoder = GaussianDecoder()
         self.num_ws = 2048
         
@@ -115,12 +115,12 @@ class ImageGenerator(nn.Module):
 
     def forward(self, ws, *args, **kwargs):
         cameras = generate_cameras(ws.size(0), ws.device)
-        sphere = self.sphere.repeat(ws.size(0), 1, 1)
-        gaussians = self.gaussians(sphere, ws)
+        spheres = self.sphere.repeat(ws.size(0), 1, 1)
+        gaussians = self.gaussians(spheres, ws)
 
         images = []
-        for gaussian, camera in zip(gaussians, cameras):
-            gaussian_model = self.decoder(gaussian)
+        for gaussian, camera, sphere in zip(gaussians, cameras, spheres):
+            gaussian_model = self.decoder(gaussian, sphere)
             image = render(camera, gaussian_model, self.background, use_rgb=True)
             images.append(image)
 
@@ -135,7 +135,7 @@ class Generator(nn.Module):
         self.w_dim = 128
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = ImageGenerator()
+        self.synthesis = ImageGenerator(**kwargs)
         self.num_ws = 2048
         self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=128, num_ws=self.num_ws, **mapping_kwargs)
 
