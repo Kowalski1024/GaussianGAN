@@ -17,6 +17,39 @@ import hydra
 from pathlib import Path
 
 
+def shape_pretrain(generator, sphere, optimizer_g, loader, device, config):
+    generator.train()
+    B, P, _ = sphere.shape
+    mse = torch.nn.L1Loss()
+
+    loader_iter = iter(loader)
+
+    for i in range(config.pretrain.ticks):
+        sphere = sphere.to(device)
+        noise = generate_noise(B, P).to(device)
+        real_images, camera = next(loader_iter)
+        real_images, camera = real_images.to(device), camera.to(device)
+
+        fake_images = generator(noise, camera)
+
+        optimizer_g.zero_grad()
+        loss_g = mse(real_images, fake_images)
+        loss_g.backward()
+        optimizer_g.step()
+
+        if i % 5 == 0:
+            print(f"#{i}\{config.pretrain.ticks}, Loss G: {loss_g}")
+
+        if i % 10 == 0:
+            images = int(B**0.5)
+            save_image_grid(
+                fake_images[: images**2].detach().cpu().numpy(),
+                f"{config.output_dir}/pretrain_{i}.png",
+                drange=[-1, 1],
+                grid_size=(images, images),
+            )
+
+
 def train_one_tick(
     generator,
     discriminator,
@@ -110,18 +143,20 @@ def train(
         grid_size=(images, images),
     )
 
-    for tick in range(config.train.ticks):
-        train_one_tick(
-            generator,
-            discriminator,
-            sphere,
-            optimizer_g,
-            optimizer_d,
-            loader,
-            device,
-            tick,
-            config,
-        )
+    shape_pretrain(generator, sphere, optimizer_g, loader, device, config)
+
+    # for tick in range(config.train.ticks):
+    #     train_one_tick(
+    #         generator,
+    #         discriminator,
+    #         sphere,
+    #         optimizer_g,
+    #         optimizer_d,
+    #         loader,
+    #         device,
+    #         tick,
+    #         config,
+    #     )
 
 
 @hydra.main(config_path="config", config_name="config.yaml", version_base="1.2")
@@ -145,7 +180,7 @@ def main(config):
     )
 
     # Create the generator and the discriminator
-    generator = ImageGenerator(**config.generator.model).to(device)
+    generator = ImageGenerator().to(device)
     discriminator = Discriminator().to(device)
 
     # Create the optimizer

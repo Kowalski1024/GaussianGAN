@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import NamedTuple
+from dataclasses import dataclass
 import math
 from diff_gaussian_rasterization import (
     GaussianRasterizationSettings,
@@ -10,7 +10,8 @@ from network.camera import Camera
 import numpy as np
 
 
-class GaussianModel(NamedTuple):
+@dataclass
+class GaussianModel():
     xyz: torch.Tensor = None
     opacity: torch.Tensor = None
     rotation: torch.Tensor = None
@@ -21,29 +22,36 @@ class GaussianModel(NamedTuple):
         for k, v in state_dict.items():
             setattr(self, k, v)
 
+    def to_float(self):
+        self.xyz = self.xyz.float()
+        self.opacity = self.opacity.float()
+        self.rotation = self.rotation.float()
+        self.scaling = self.scaling.float()
+        self.shs = self.shs.float()
+
     def __repr__(self) -> str:
         return f"GaussianModel(xyz={self.xyz.shape}, opacity={self.opacity.shape}, rotation={self.rotation.shape}, scaling={self.scaling.shape}, shs={self.shs.shape})"
 
 
 class GaussianDecoder(nn.Module):
     feature_channels = {"scaling": 3, "rotation": 4, "opacity": 1, "shs": 3, "xyz": 3}
-    use_rgb = True
 
-    def __init__(self):
+    def __init__(self, in_channels=640, use_rgb=True, use_pc=True):
         super(GaussianDecoder, self).__init__()
+        self.use_rgb = use_rgb
+        self.use_pc = use_pc
+
         self.mlp = nn.Sequential(
-            nn.Linear(640, 128, 1),
-            nn.LeakyReLU(0.2),
-            nn.Linear(128, 128, 1),
-            nn.LeakyReLU(0.02),
-            nn.Linear(128, 128, 1),
-            nn.LeakyReLU(0.2),
+            nn.Linear(in_channels, 128),
+            nn.SiLU(inplace=True),
+            nn.Linear(128, 128),
+            nn.SiLU(inplace=True),
         )
 
         self.decoders = torch.nn.ModuleList()
 
         for key, channels in self.feature_channels.items():
-            layer = nn.Linear(128, channels, 1)
+            layer = nn.Linear(128, channels)
 
             if key == "scaling":
                 torch.nn.init.constant_(layer.bias, -5.0)
@@ -56,8 +64,7 @@ class GaussianDecoder(nn.Module):
             self.decoders.append(layer)
 
     def forward(self, x, pc=None):
-        if self.mlp is not None:
-            x = self.mlp(x)
+        x = self.mlp(x)
 
         ret = {}
         for k, layer in zip(self.feature_channels.keys(), self.decoders):
@@ -66,7 +73,7 @@ class GaussianDecoder(nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.02)
+                v = torch.clamp(v, min=0, max=0.1)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
@@ -74,9 +81,12 @@ class GaussianDecoder(nn.Module):
                     v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
-                if pc is not None:
-                    v = v + pc
-                v = torch.tanh(v) * 0.35
+                max_step = 1.2 / 32
+                v = (torch.sigmoid(v) - 0.5) * max_step
+                v = v + pc
+                # if pc is not None:
+                #     v = v + pc
+                # v = torch.tanh(v) * 0.35
             ret[k] = v
 
         return GaussianModel(**ret)

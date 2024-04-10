@@ -8,3 +8,5 @@ run.sh
 datasets/*
 outputs/*
 wandb/*
+archive/*
+data/*

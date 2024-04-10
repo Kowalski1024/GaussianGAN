@@ -9,8 +9,8 @@ class Camera(NamedTuple):
     world_view_transform: torch.Tensor
     full_proj_transform: torch.Tensor
     camera_center: torch.Tensor
-    image_height: int = 128
-    image_width: int = 128
+    image_height: int = 800
+    image_width: int = 800
 
 
 def extract_cameras(camera_to_world, intrinsics) -> list[Camera]:
@@ -19,6 +19,37 @@ def extract_cameras(camera_to_world, intrinsics) -> list[Camera]:
     # Extract FoVx and FoVy from intrinsics matrix
     FoVx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
     FoVy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
+
+    world_view_transform = w2c.transpose(-2, -1)
+    zfar = 100.0
+    znear = 0.01
+
+    # Calculate projection matrix
+    projection_matrix = _get_projection_matrices(znear, zfar, FoVx, FoVy).transpose(
+        -2, -1
+    )
+
+    full_proj_transform = torch.bmm(world_view_transform, projection_matrix)
+    camera_center = torch.inverse(world_view_transform)[:, 3, :3]
+
+    cameras = []
+    for i in range(camera_to_world.shape[0]):
+        cameras.append(
+            Camera(
+                FoVx[i].item(),
+                FoVy[i].item(),
+                world_view_transform[i],
+                full_proj_transform[i],
+                camera_center[i],
+            )
+        )
+
+    return cameras
+
+
+def extract_cameras_2(camera_to_world, FoVx, FoVy) -> list[Camera]:
+    camera_to_world[:, :3, 1:3] *= -1
+    w2c = torch.inverse(camera_to_world)
 
     world_view_transform = w2c.transpose(-2, -1)
     zfar = 100.0

@@ -85,6 +85,23 @@ def load_sphere(path, points=4096):
     return pc_normalize(sphere)
 
 
+def fibonacci_sphere(samples=1000):
+    phi = torch.pi * (3. - torch.sqrt(torch.tensor(5.)))  # golden angle in radians
+
+    indices = torch.arange(samples)
+    y = 1 - (indices / float(samples - 1)) * 2  # y goes from 1 to -1
+    radius = torch.sqrt(1 - y*y)  # radius at y
+
+    theta = phi * indices  # golden angle increment
+
+    x = torch.cos(theta) * radius
+    z = torch.sin(theta) * radius
+
+    points = torch.stack([x, y, z], dim=-1)
+
+    return points
+
+
 def save_image_grid(img, fname, drange, grid_size):
     lo, hi = drange
     img = np.asarray(img, dtype=np.float32)
