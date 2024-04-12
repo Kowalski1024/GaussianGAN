@@ -1,12 +1,14 @@
+import math
+
 import torch
 import torch.nn as nn
-from gaussian_model import Generator, GaussianModel
 from diff_gaussian_rasterization import (
     GaussianRasterizationSettings,
     GaussianRasterizer,
 )
-import math
-from camera import Camera, extract_cameras
+
+from .camera import Camera, extract_cameras
+from .gaussian_model import GaussianModel, Generator
 
 
 class ImageGenerator(nn.Module):

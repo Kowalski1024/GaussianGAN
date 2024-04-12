@@ -1,12 +1,14 @@
-import torch
-import numpy as np
-from torch import nn
-from plyfile import PlyData, PlyElement
-from typing import NamedTuple
-from torch_geometric.nn import global_max_pool, PointGNNConv, knn_graph
-from torch_geometric.data import Data
-import rff
 import os
+from typing import NamedTuple
+
+import numpy as np
+import rff
+import torch
+from plyfile import PlyData, PlyElement
+from torch import nn
+from torch_geometric.data import Data
+from torch_geometric.nn import PointGNNConv, global_max_pool
+from torch_geometric.nn.models import LINKX
 
 
 def inverse_sigmoid(x):
@@ -211,11 +213,11 @@ class PointGenerator(nn.Module):
             nn.Tanh(),
         )
 
-        self.conv1 = GNNConv(128, 128)
+        self.conv1 = LINKX(150_000, 128, 128, 128, 3)
 
     def forward(self, pos, edge_index, batch):
         x = self.encoder(pos)
-        x = self.conv1(x, pos, edge_index)
+        x = self.conv1(x, edge_index)
 
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
@@ -232,7 +234,7 @@ class GaussiansGenerator(nn.Module):
 
         self.point_encoder = PointGenerator()
 
-        self.gnn_conv = GNNConv(128, 128)
+        self.gnn_conv = LINKX(150_000, 128, 128, 128, 3)
 
         self.global_conv = nn.Sequential(
             nn.Linear(256, 128),
@@ -243,7 +245,7 @@ class GaussiansGenerator(nn.Module):
         pos, x = self.point_encoder(pos, edge_index, batch)
         x = self.global_conv(x)
 
-        x = self.gnn_conv(x, pos, edge_index)
+        x = self.gnn_conv(x, edge_index)
 
         return x, pos
 

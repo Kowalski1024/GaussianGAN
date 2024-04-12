@@ -14,7 +14,7 @@ DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/lego"
 OUTPUT_PATH = "outputs/"
 BATCH_SIZE = 16
 EPOCHS = 300
-POINTS = 8192
+POINTS = 150_000
 IMAGE_SIZE = 800
 
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
@@ -64,7 +64,7 @@ def loss_fn(pred, gt, lambd=0.2):
 def train(model, criterion, optimizer, train_loader, device, epochs):
     sphere = fibonacci_sphere(POINTS)
     sphere = Data(pos=sphere)
-    sphere.edge_index = knn_graph(sphere.pos, k=6)
+    sphere.edge_index = knn_graph(sphere.pos, k=3)
     sphere = sphere.to(device)
 
     print(f"Training epochs: {epochs}")
