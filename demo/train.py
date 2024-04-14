@@ -1,6 +1,6 @@
 import torch
-from render import ImageGenerator
-from dataset import NerfDataset
+from network.render import ImageGenerator
+from dataset import NerfDataset, CarsDataset
 from torchvision import transforms as T
 from loss_utils import l1_loss, ssim
 import PIL.Image
@@ -10,12 +10,12 @@ from torch_geometric.nn import knn_graph
 import os
 
 
-DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/lego"
+DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars_train_dir"
 OUTPUT_PATH = "outputs/"
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 EPOCHS = 300
-POINTS = 150_000
-IMAGE_SIZE = 800
+POINTS = 8192
+IMAGE_SIZE = 128
 
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
@@ -39,7 +39,7 @@ def save_image_grid(img, fname, drange, grid_size):
         PIL.Image.fromarray(img, "RGB").save(fname)
 
 
-def fibonacci_sphere(samples=1000):
+def fibonacci_sphere(samples=1000, scale=1.0):
     phi = torch.pi * (3.0 - torch.sqrt(torch.tensor(5.0)))  # golden angle in radians
 
     indices = torch.arange(samples)
@@ -53,7 +53,7 @@ def fibonacci_sphere(samples=1000):
 
     points = torch.stack([x, y, z], dim=-1)
 
-    return points
+    return points * scale
 
 
 def loss_fn(pred, gt, lambd=0.2):
@@ -62,19 +62,22 @@ def loss_fn(pred, gt, lambd=0.2):
 
 
 def train(model, criterion, optimizer, train_loader, device, epochs):
-    sphere = fibonacci_sphere(POINTS)
+    sphere = fibonacci_sphere(POINTS, 1.0)
     sphere = Data(pos=sphere)
     sphere.edge_index = knn_graph(sphere.pos, k=3)
     sphere = sphere.to(device)
 
+    z = torch.randn(3, 128).to(device)
+
     print(f"Training epochs: {epochs}")
     for epoch in range(epochs):
-        for image, camera in train_loader:
+        for image, camera, idx in train_loader:
             image = image.to(device)
             camera = camera.to(device)
+            ws = z[idx]
 
             optimizer.zero_grad()
-            output = model(sphere, camera)
+            output = model(sphere, camera, ws)
             loss = criterion(output, image)
             loss.backward()
             optimizer.step()
@@ -88,6 +91,12 @@ def train(model, criterion, optimizer, train_loader, device, epochs):
                     drange=[-1, 1],
                     grid_size=(images, images),
                 )
+                save_image_grid(
+                    image[: images**2].detach().cpu().numpy(),
+                    f"{OUTPUT_PATH}/gt_{epoch}.png",
+                    drange=[-1, 1],
+                    grid_size=(images, images),
+                )
             except Exception as e:
                 pass
 
@@ -96,7 +105,7 @@ def train(model, criterion, optimizer, train_loader, device, epochs):
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataset = NerfDataset(
+    dataset = CarsDataset(
         DATASET_PATH, transform=T.Compose([T.ToTensor(), T.Normalize((0.5,), (0.5,))])
     )
     dataloader = torch.utils.data.DataLoader(
@@ -106,7 +115,7 @@ def main():
 
     model = ImageGenerator(background, IMAGE_SIZE).to(device)
     criterion = loss_fn
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     train(model, criterion, optimizer, dataloader, device, EPOCHS)
 

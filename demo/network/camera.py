@@ -12,8 +12,8 @@ class Camera(NamedTuple):
     image_width: int = 800
 
 
-def extract_cameras(camera_to_world, FoVx, FoVy, image_size=800) -> list[Camera]:
-    camera_to_world[:, :3, 1:3] *= -1
+def extract_cameras(camera_to_world, FoVx, FoVy, image_size=128) -> list[Camera]:
+    # camera_to_world[:, :3, 1:3] *= -1
     w2c = torch.inverse(camera_to_world)
 
     world_view_transform = w2c.transpose(-2, -1)

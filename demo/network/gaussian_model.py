@@ -8,7 +8,7 @@ from plyfile import PlyData, PlyElement
 from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.nn import PointGNNConv, global_max_pool
-from torch_geometric.nn.models import LINKX
+from .layers import StyleLINKX
 
 
 def inverse_sigmoid(x):
@@ -104,9 +104,9 @@ class GaussianDecoder(nn.Module):
 
         self.mlp = nn.Sequential(
             nn.Linear(in_channels, 128),
-            nn.SiLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(128, 128),
-            nn.SiLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
         )
 
         self.feature_channels = {
@@ -159,6 +159,8 @@ class GaussianDecoder(nn.Module):
                     v = v + pc
                 else:
                     v = pc
+
+                v = v * 0.2
             ret[k] = v
 
         return GaussianModel(**ret)
@@ -213,11 +215,11 @@ class PointGenerator(nn.Module):
             nn.Tanh(),
         )
 
-        self.conv1 = LINKX(150_000, 128, 128, 128, 3)
+        self.conv1 = StyleLINKX(8192, 128, 128, 128, 128, 2)
 
-    def forward(self, pos, edge_index, batch):
+    def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
-        x = self.conv1(x, edge_index)
+        x = self.conv1(x, edge_index, w)
 
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
@@ -234,31 +236,50 @@ class GaussiansGenerator(nn.Module):
 
         self.point_encoder = PointGenerator()
 
-        self.gnn_conv = LINKX(150_000, 128, 128, 128, 3)
+        self.gnn_conv = StyleLINKX(8192, 128, 128, 128, 128, 3)
 
         self.global_conv = nn.Sequential(
             nn.Linear(256, 128),
             nn.LeakyReLU(0.2, inplace=True),
         )
 
-    def forward(self, pos, edge_index, batch):
-        pos, x = self.point_encoder(pos, edge_index, batch)
+    def forward(self, pos, edge_index, batch, w):
+        pos, x = self.point_encoder(pos, edge_index, batch, w)
         x = self.global_conv(x)
 
-        x = self.gnn_conv(x, edge_index)
+        x = self.gnn_conv(x, edge_index, w)
 
         return x, pos
+
+
+class Mapping(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, layer_num=2):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for _ in range(layer_num):
+            self.layers.append(nn.Linear(in_channels, hidden_channels))
+            in_channels = hidden_channels
+        self.layers.append(nn.Linear(in_channels, out_channels))
+        self.act = nn.LeakyReLU(inplace=True)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+            x = self.act(x)
+        return x
 
 
 class Generator(nn.Module):
     def __init__(self, shs_degree=3, use_rgb=False, offset=True):
         super().__init__()
+        self.mapping = Mapping(128, 128, 128, 2)
         self.gaussians = GaussiansGenerator()
         self.decoder = GaussianDecoder(128, shs_degree, use_rgb, offset)
 
-    def forward(self, sphere: Data):
+    def forward(self, sphere: Data, z: torch.Tensor):
+        w = self.mapping(z)
         gaussians, point_cloud = self.gaussians(
-            sphere.pos, sphere.edge_index, sphere.batch
+            sphere.pos, sphere.edge_index, sphere.batch, z
         )
         model = self.decoder(gaussians, point_cloud)
         return model

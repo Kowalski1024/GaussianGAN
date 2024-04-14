@@ -27,17 +27,17 @@ class ImageGenerator(nn.Module):
         self.background: torch.Tensor
         self.register_buffer("background", background)
 
-    def forward(self, sphere, camera):
+    def forward(self, sphere, camera, ws):
         with torch.no_grad():
             poses = camera[:, :16].view(-1, 4, 4)
-            fovx = camera[:, 16]
-            fovy = camera[:, 17]
-            cameras = extract_cameras(poses, fovx, fovy, self.image_resolution)
-
-        gaussian_model = self.gaussians(sphere)
+            intrinsics = camera[:, 16:25].view(-1, 3, 3) * 512
+            FoVx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
+            FoVy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
+            cameras = extract_cameras(poses, FoVx, FoVy, self.image_resolution)
 
         images = []
-        for camera in cameras:
+        for camera, w in zip(cameras, ws):
+            gaussian_model = self.gaussians(sphere, w)
             image = render(camera, gaussian_model, self.background, use_rgb=True)
             images.append(image)
 
