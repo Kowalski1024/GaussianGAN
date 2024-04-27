@@ -124,18 +124,19 @@ def training_loop(
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
     args = None,
-    run_name = None
+    run_name = None,
+    wandb_mode = None,
+    note=None,
 ):
-    image_snapshot_ticks = 2
-    network_snapshot_ticks = 100
+    image_snapshot_ticks = 4
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
     np.random.seed(random_seed * num_gpus + rank)
     torch.manual_seed(random_seed * num_gpus + rank)
-    torch.backends.cudnn.benchmark = True    # Improves training speed.
-    torch.backends.cuda.matmul.allow_tf32 = False       # Improves numerical accuracy.
-    torch.backends.cudnn.allow_tf32 = False             # Improves numerical accuracy.
+    torch.backends.cudnn.benchmark = False    # Improves training speed.
+    torch.backends.cuda.matmul.allow_tf32 = True       # Improves numerical accuracy.
+    torch.backends.cudnn.allow_tf32 = True             # Improves numerical accuracy.
     conv2d_gradfix.enabled = True                       # Improves training speed.
     grid_sample_gradfix.enabled = True                  # Avoids errors with the augmentation pipe.
 
@@ -161,6 +162,7 @@ def training_loop(
     G_ema = copy.deepcopy(G).eval()
 
     print(G)
+    print(D)
 
     # Resume from existing pickle.
     if (resume_pkl is not None) and (rank == 0):
@@ -171,7 +173,8 @@ def training_loop(
             misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
 
     current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    wandb.init(project="style-gan", config=dict(args), name=f"{run_name}_{current_date}")
+    if rank == 0:
+        wandb.init(project="style-gan", config=dict(args), name=f"{run_name}_{current_date}", mode=wandb_mode, notes=note)
 
     # Print network summary tables.
     # if rank == 0:
@@ -214,6 +217,9 @@ def training_loop(
             opt_kwargs.lr = opt_kwargs.lr * mb_ratio
             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+            # if name == "D":
+            #     phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=2)]
+            # else:
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
     for phase in phases:
@@ -222,6 +228,8 @@ def training_loop(
         if rank == 0:
             phase.start_event = torch.cuda.Event(enable_timing=True)
             phase.end_event = torch.cuda.Event(enable_timing=True)
+
+    print(phases)
 
     # Export sample images.
     grid_size = None
@@ -371,7 +379,7 @@ def training_loop(
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
-        # if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
+        # if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0) and cur_tick:
         #     snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
         #     for key, value in snapshot_data.items():
         #         if isinstance(value, torch.nn.Module):
@@ -409,10 +417,11 @@ def training_loop(
         stats_collector.update()
         stats_dict = stats_collector.as_dict()
 
-        metrics_ = {}
-        for key, val in stats_dict.items():
-            metrics_[key] = val["mean"]
-        wandb.log(metrics_)
+        if rank == 0:
+            metrics_ = {}
+            for key, val in stats_dict.items():
+                metrics_[key] = val["mean"]
+            wandb.log(metrics_)
 
         # Update logs.
         timestamp = time.time()

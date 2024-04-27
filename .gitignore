@@ -6,3 +6,5 @@ training-runs/*
 *.err
 run.sh
 datasets/*
+wandb/*
+cars_train/*

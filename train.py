@@ -161,6 +161,8 @@ def parse_comma_separated_list(s):
 @click.option('--workers',      help='DataLoader worker processes', metavar='INT',              type=click.IntRange(min=1), default=3, show_default=True)
 @click.option('-n','--dry-run', help='Print training options and exit',                         is_flag=True)
 @click.option('--name',  type=str)
+@click.option('--wandb', default="enabled",  type=str)
+@click.option('--note', default="enabled",  type=str)
 
 def main(**kwargs):
     """Train a GAN using the techniques described in the paper
@@ -221,6 +223,8 @@ def main(**kwargs):
     c.image_snapshot_ticks = c.network_snapshot_ticks = opts.snap
     c.random_seed = c.training_set_kwargs.random_seed = opts.seed
     c.data_loader_kwargs.num_workers = opts.workers
+    c.wandb_mode = opts.wandb
+    c.note = opts.note
 
     # Sanity checks.
     if c.batch_size % c.num_gpus != 0:
@@ -236,13 +240,15 @@ def main(**kwargs):
     c.ema_kimg = c.batch_size * 10 / 32
     if opts.cfg == 'stylegan2':
         c.G_kwargs.class_name = 'training.v2.gan.Generator'
-        c.loss_kwargs.style_mixing_prob = 0 # Enable style mixing regularization.
-        c.loss_kwargs.pl_weight = 2 # Enable path length regularization.
+        c.loss_kwargs.style_mixing_prob = 0.0 # Enable style mixing regularization.
+        c.loss_kwargs.pl_weight = 0 # Enable path length regularization.
         c.G_reg_interval = 4 # Enable lazy regularization for G.
         c.G_kwargs.fused_modconv_default = 'inference_only' # Speed up training by using regular convolutions instead of grouped convolutions.
         c.loss_kwargs.pl_no_weight_grad = True # Speed up path length regularization by skipping gradient computation wrt. conv2d weights.
         c.G_kwargs.attention = False
         c.G_kwargs.blocks = 3
+        c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
+        c.loss_kwargs.blur_fade_kimg = c.batch_size * 50 / 32 # Fade out the blur during the first N kimg.
     else:
         c.G_kwargs.class_name = 'training.networks_stylegan3.Generator'
         c.G_kwargs.magnitude_ema_beta = 0.5 ** (c.batch_size / (20 * 1e3))
@@ -252,11 +258,11 @@ def main(**kwargs):
             c.G_kwargs.channel_max *= 2
             c.G_kwargs.use_radial_filters = True # Use radially symmetric downsampling filters.
             c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
-            c.loss_kwargs.blur_fade_kimg = c.batch_size * 200 / 32 # Fade out the blur during the first N kimg.
+            c.loss_kwargs.blur_fade_kimg = c.batch_size * 100 / 32 # Fade out the blur during the first N kimg.
 
     # Augmentation.
     if opts.aug != 'noaug':
-        c.augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', xflip=1, rotate90=1, xint=1, scale=1, rotate=1, aniso=1, xfrac=1, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1)
+        c.augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', xflip=0, rotate90=0, xint=0, scale=0, rotate=0, aniso=0, xfrac=0, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1)
         if opts.aug == 'ada':
             c.ada_target = opts.target
         if opts.aug == 'fixed':

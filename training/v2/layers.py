@@ -1,85 +1,21 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F  
-
-
-class Attention(nn.Module):
-    def __init__(self, channels):
-        super(Attention, self).__init__()
-        self.channels = channels
-
-        self.theta = nn.Conv1d(self.channels, self.channels // 8, 1, bias=False)
-        self.phi = nn.Conv1d(self.channels, self.channels // 8, 1, bias=False)
-        self.g = nn.Conv1d(self.channels, self.channels // 2, 1, bias=False)
-        self.o = nn.Conv1d(self.channels // 2, self.channels, 1, bias=False)
-
-        self.gamma = nn.Parameter(torch.tensor(0.0), requires_grad=True)
-
-    def forward(self, x):
-        # Apply convs
-        theta = self.theta(x)
-        phi = self.phi(x)
-        g = self.g(x)
-
-        beta = F.softmax(torch.bmm(theta.transpose(1, 2), phi), -1)
-        o = self.o(torch.bmm(g, beta.transpose(1, 2)))
-
-        return self.gamma * o + x
-
-
-class EdgeFeature(nn.Module):
-    """construct edge feature for each point
-    Args:
-        tensor: input a point cloud tensor,batch_size,num_dims,num_points
-        k: int
-    Returns:
-        edge features: (batch_size,num_dims,num_points,k)
-    """
-
-    def __init__(self, k=16, use_pointnet=True):
-        super(EdgeFeature, self).__init__()
-        self.k = k
-
-    def forward(self, point_cloud):
-        B, dims, N = point_cloud.shape
-
-        # batched pair-wise distance
-        xt = point_cloud.permute(0, 2, 1)
-        dist = torch.cdist(xt, xt, p=2)  # [B, N, N]
-
-        # get k NN id
-        _, idx_o = torch.topk(dist, self.k+1, dim=2, largest=False)
-        idx = idx_o[: ,: ,1:] # [B, N, k]
-        idx = idx.contiguous().view(B, -1)
-
-        # gather
-        neighbors = []
-        for b in range(B):
-            tmp = torch.index_select(
-                point_cloud[b], 1, idx[b]
-            )  # [d, N*k] <- [d, N], 0, [N*k]
-            tmp = tmp.view(dims, N, -1)
-            neighbors.append(tmp)
-
-        neighbors = torch.stack(neighbors)  # [B, d, N, k]
-
-        # centralize
-        central = point_cloud.unsqueeze(3)  # [B, d, N, 1]
-        central = central.repeat(1, 1, 1, self.k)  # [B, d, N, k]
-
-        edge_feature = torch.cat([central, neighbors - central], dim=1)
-        assert edge_feature.shape == (B, 2 * dims, N, self.k)
-
-        return edge_feature, idx
+from torch import nn
+# from .layers import Attention, EdgeBlock, AdaptivePointNorm
+from .gaussian import GaussianDecoder, render
+from .camera import extract_cameras, generate_cameras
+from training import networks_stylegan2 as stylegan2
+from torch_geometric.nn import knn_graph, PointGNNConv, global_max_pool, InstanceNorm
+from torch_geometric.data import Data, Batch
+from torch_geometric.utils import to_dense_batch
+import rff
 
 
 class AdaptivePointNorm(nn.Module):
     def __init__(self, in_channel, style_dim):
         super().__init__()
-        Conv = nn.Conv1d  # EqualConv1d
 
-        self.norm = nn.InstanceNorm1d(in_channel)
-        self.style = Conv(style_dim, in_channel * 2, 1)
+        self.norm = InstanceNorm(in_channel)
+        self.style = nn.Linear(style_dim, in_channel * 2)
 
         self.style.weight.data.normal_()
         self.style.bias.data.zero_()
@@ -92,155 +28,211 @@ class AdaptivePointNorm(nn.Module):
         gamma, beta = style.chunk(2, 1)
 
         out = self.norm(input)
-        out = gamma * out + beta
+        out = (gamma * out).add_(beta)
 
         return out
 
 
-class EdgeBlock(nn.Module):
-    """Edge Convolution using 1x1 Conv h
-    [B, Fin, N] -> [B, Fout, N]
-    """
+class GNNConv(nn.Module):
+    def __init__(self, channels, aggr="sum"):
+        super().__init__()
 
-    def __init__(self, Fin, Fout, k, attn=True):
-        super(EdgeBlock, self).__init__()
-        self.k = k
-        self.Fin = Fin
-        self.Fout = Fout
-        self.edge_features = EdgeFeature(k)
-        self.conv_w = nn.Sequential(
-            nn.Conv2d(Fin, Fout // 2, 1),
-            nn.BatchNorm2d(Fout // 2),
+        self.mlp_h = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels, 3),
+            nn.Tanh(),
+        )
+
+        self.mlp_f = nn.Sequential(
+            nn.Linear(channels + 3, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.mlp_g = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels, channels),
+        )
+
+        self.network = PointGNNConv(self.mlp_h, self.mlp_f, self.mlp_g, aggr=aggr)
+
+    def forward(self, x, pos, edge_index):
+        return self.network(x, pos, edge_index)
+
+
+class SyntheticBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+
+        self.gnn_conv = GNNConv(channels)
+        self.adaptive_norm = AdaptivePointNorm(channels, 128)
+        self.leaky_relu = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, h, pos, edge_index, style):
+        h = self.gnn_conv(h, pos, edge_index)
+        h = self.leaky_relu(h)
+        h = self.adaptive_norm(h, style)
+        return h
+
+
+class CloudGenerator(nn.Module):
+    def __init__(self, channels=128, z_dim=128, blocks=2):
+        super().__init__()
+        self.z_dim = z_dim
+
+        self.encoder = rff.layers.GaussianEncoding(
+            sigma=10.0, input_size=3, encoded_size=channels // 2
+        )
+
+        self.style = nn.Sequential(
+            nn.Linear(z_dim + 3, 128),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(Fout // 2, Fout, 1),
-            nn.BatchNorm2d(Fout),
+            nn.Linear(128, 128),
             nn.LeakyReLU(inplace=True),
         )
 
-        self.conv_x = nn.Sequential(
-            nn.Conv2d(2 * Fin, Fout, [1, 1], [1, 1]),  # Fin, Fout, kernel_size, stride
-            nn.BatchNorm2d(Fout),
+        self.global_conv = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(128, 128),
             nn.LeakyReLU(inplace=True),
         )
 
-        self.conv_out = nn.Conv2d(
-            Fout, Fout, [1, k], [1, 1]
-        )  # Fin, Fout, kernel_size, stride
-
-    def forward(self, x):
-        B, C, N = x.shape
-        x, _ = self.edge_features(x)  # [B, 2Fin, N, k]
-        w = self.conv_w(x[:, C:, :, :])
-        w = F.softmax(w, dim=-1)  # [B, Fout, N, k] -> [B, Fout, N, k]
-
-        x = self.conv_x(x)  # Bx2CxNxk
-        x = x * w  # Bx2CxNxk
-
-        x = self.conv_out(x)  # [B, 2*Fout, N, 1]
-
-        x = x.squeeze(3)  # BxCxN
-
-        return x
-
-
-class UpBlock(nn.Module):
-    def __init__(self, up_ratio=4, in_channels=130):
-        super(UpBlock, self).__init__()
-        self.up_ratio = up_ratio
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=in_channels, out_channels=256, kernel_size=1),
-            nn.ReLU(),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=256, out_channels=128, kernel_size=1), nn.ReLU()
+        self.tail = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(128, 64),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(64, 3),
+            nn.Tanh(),
         )
 
-        self.attention_unit = Attention(in_channels)
-        self.register_buffer("grid", self.gen_grid(up_ratio))
+        self.synthetic_blocks = nn.ModuleList()
+        for _ in range(blocks):
+            self.synthetic_blocks.append(SyntheticBlock(channels))
 
-    def forward(self, inputs):
-        net = inputs  # b,128,n
-        grid = self.grid.clone()
-        grid = grid.unsqueeze(0).repeat(net.shape[0], 1, net.shape[2])  # b,4,2*n
-        grid = grid.view([net.shape[0], -1, 2])  # b,4*n,2
+    def forward(self, pos, edge_index, batch, z):
+        z = z.view(-1, self.z_dim)
+        style = torch.cat([z, pos], dim=-1)
+        style = self.style(style)
 
-        net = net.permute(0, 2, 1)  # b,n,128
-        net = net.repeat(1, self.up_ratio, 1)  # b,4n,128
-        net = torch.cat([net, grid], dim=2)  # b,n*4,130
+        x = self.encoder(pos)
 
-        net = net.permute(0, 2, 1)  # b,130,n*4
+        for block in self.synthetic_blocks:
+            x = block(x, pos, edge_index, style)
 
-        net = self.attention_unit(net)
+        h = global_max_pool(x, batch)
+        h = self.global_conv(h)
+        h = h[batch]
 
-        net = self.conv1(net)
-        net = self.conv2(net)
+        x = torch.cat([x, h], dim=-1)
+        return self.tail(x) * 0.75, x
 
-        return net
+
+class GaussiansGenerator(nn.Module):
+    def __init__(self, channels=128, z_dim=128, blocks=1):
+        super().__init__()
+        self.z_dim = z_dim
+
+        self.style = nn.Sequential(
+            nn.Linear(z_dim + 3, 128),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(128, 128),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.feature_encoder = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.synthetic_blocks = nn.ModuleList()
+        for _ in range(blocks):
+            self.synthetic_blocks.append(SyntheticBlock(channels))
+
+    def forward(self, h, pos, edge_index, batch, z):
+        z = z.view(-1, self.z_dim)
+        style = torch.cat([z, pos], dim=-1)
+        style = self.style(style)
+
+        h = self.feature_encoder(h)
+
+        for block in self.synthetic_blocks:
+            h = block(h, pos, edge_index, style)
+
+        return h
+
+
+class ImageGenerator(nn.Module):
+    def __init__(self, z_dim=128, **kwargs):
+        super(ImageGenerator, self).__init__()
+        self.point_encoder = CloudGenerator(z_dim=z_dim)
+        self.gaussians = GaussiansGenerator(z_dim=z_dim)
+        self.decoder = GaussianDecoder(128)
+        self.num_ws = 4096 * 2
+
+        self.register_buffer("background", torch.ones(3, dtype=torch.float32))
+        self.register_buffer("sphere", self._fibonacci_sphere(self.num_ws, 0.3))
 
     @staticmethod
-    def gen_grid(up_ratio):
-        import math
+    def _fibonacci_sphere(samples=1000, scale=1.0):
+        phi = torch.pi * (3.0 - torch.sqrt(torch.tensor(5.0)))
 
-        sqrted = int(math.sqrt(up_ratio)) + 1
-        for i in range(1, sqrted + 1).__reversed__():
-            if (up_ratio % i) == 0:
-                num_x = i
-                num_y = up_ratio // i
-                break
-        grid_x = torch.linspace(-0.2, 0.2, num_x)
-        grid_y = torch.linspace(-0.2, 0.2, num_y)
+        indices = torch.arange(samples)
+        y = 1 - (indices / float(samples - 1)) * 2
+        radius = torch.sqrt(1 - y * y)
 
-        x, y = torch.meshgrid([grid_x, grid_y], indexing="xy")
-        grid = torch.stack([x, y], dim=-1)  # 2,2,2
-        grid = grid.view([-1, 2])  # 4,2
-        return grid
+        theta = phi * indices
 
+        x = torch.cos(theta) * radius
+        z = torch.sin(theta) * radius
 
-class DownBlock(nn.Module):
-    def __init__(self, up_ratio=4, in_channels=128):
-        super(DownBlock, self).__init__()
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=256,
-                kernel_size=[up_ratio, 1],
-                padding=0,
-            ),
-            nn.ReLU(),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=256, out_channels=128, kernel_size=1), nn.ReLU()
-        )
-        self.up_ratio = up_ratio
+        points = torch.stack([x, y, z], dim=-1)
 
-    def forward(self, inputs):
-        net = inputs
+        return points * scale
 
-        net = net.view([inputs.shape[0], inputs.shape[1], self.up_ratio, -1])
+    def forward(self, z, camera=None, *args, **kwargs):
+        B, _, _ = z.size()
+        with torch.no_grad():
+            poses = camera[:, :16].view(-1, 4, 4)
+            intrinsics = camera[:, 16:25].view(-1, 3, 3) * 512
+            cameras = extract_cameras(poses, intrinsics)
 
-        net = self.conv1(net)
-        net = net.squeeze(2)
-        net = self.conv2(net)
-        return net
+            spheres = Batch.from_data_list([Data(pos=self.sphere) for _ in range(B)])
+            pos, batch = spheres.pos, spheres.batch
+            edge_index = knn_graph(spheres.pos, k=8, batch=spheres.batch)
+
+        point_clouds, points_features = self.point_encoder(pos, edge_index, batch, z)
+        gaussians = self.gaussians(points_features, point_clouds, edge_index, batch, z)
+
+        gaussians = to_dense_batch(gaussians, batch)[0]
+        point_clouds = to_dense_batch(point_clouds, batch)[0]
+
+        images = []
+        for gaussian, camera, point_cloud in zip(gaussians, cameras, point_clouds):
+            gaussian_model = self.decoder(gaussian, point_cloud)
+            image = render(camera, gaussian_model, self.background, use_rgb=True)
+            images.append(image)
+
+        return torch.stack(images, dim=0).contiguous()
 
 
-class UpProjection(nn.Module):
-    def __init__(self, up_ratio=4):
-        super(UpProjection, self).__init__()
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=1), nn.ReLU()
-        )
-        self.up_block1 = UpBlock(up_ratio=up_ratio, in_channels=128 + 2)
-        self.up_block2 = UpBlock(up_ratio=up_ratio, in_channels=128 + 2)
-        self.down_block = DownBlock(up_ratio=up_ratio, in_channels=128)
+class Generator(nn.Module):
+    def __init__(self, z_dim, c_dim, w_dim, img_resolution, img_channels, mapping_kwargs = {}, **kwargs):
+        super(Generator, self).__init__()
+        self.z_dim = z_dim
+        self.c_dim = 0
+        self.w_dim = 128
+        self.img_resolution = img_resolution
+        self.img_channels = img_channels
+        self.synthesis = ImageGenerator(**kwargs)
+        self.num_ws = self.synthesis.num_ws
+        self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=0, w_dim=128, num_ws=self.num_ws, **mapping_kwargs)
 
-    def forward(self, input):
-        L = self.conv1(input)
 
-        H0 = self.up_block1(L)
-        L0 = self.down_block(H0)
+    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
+        ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+        return self.synthesis(ws, c)
+        
 
-        E0 = L0 - L
-        H1 = self.up_block2(E0)
-        H2 = H0 + H1
-        return H2

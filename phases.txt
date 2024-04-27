@@ -1,0 +1,366 @@
+{'name': 'Gmain', 'module': Generator(
+  (synthesis): SynthesisNetwork(
+    (backbone): SynthesisNetwork(
+      w_dim=512, num_ws=12, img_resolution=128, img_channels=512, num_fp16_res=4
+      (b4): SynthesisBlock(
+        resolution=4, architecture=skip
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=4, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b8): SynthesisBlock(
+        resolution=8, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=8, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=8, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b16): SynthesisBlock(
+        resolution=16, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=16, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=16, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b32): SynthesisBlock(
+        resolution=32, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=32, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=32, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b64): SynthesisBlock(
+        resolution=64, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=64, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=64, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b128): SynthesisBlock(
+        resolution=128, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=256, w_dim=512, resolution=128, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=256, out_channels=256, w_dim=512, resolution=128, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=256, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=256, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=256, activation=linear)
+        )
+      )
+    )
+    (gaussian_decoder): GaussianDecoder(
+      (mlp): MLP(
+        (layers): Sequential(
+          (0): Linear(in_features=512, out_features=128, bias=True)
+          (1): SiLU(inplace=True)
+          (2): Linear(in_features=128, out_features=128, bias=True)
+          (3): SiLU(inplace=True)
+          (4): Linear(in_features=128, out_features=128, bias=True)
+        )
+      )
+      (decoders): ModuleList(
+        (0): Linear(in_features=128, out_features=3, bias=True)
+        (1): Linear(in_features=128, out_features=4, bias=True)
+        (2): Linear(in_features=128, out_features=1, bias=True)
+        (3): Linear(in_features=128, out_features=3, bias=True)
+        (4): Linear(in_features=128, out_features=3, bias=True)
+      )
+    )
+  )
+  (mapping): MappingNetwork(
+    z_dim=512, c_dim=0, w_dim=512, num_ws=12
+    (fc0): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc1): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc2): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc3): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc4): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc5): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc6): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc7): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+  )
+), 'opt': AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: [0.0, 0.9919919678228657]
+    capturable: False
+    eps: 1e-08
+    foreach: None
+    lr: 0.0016
+    maximize: False
+    weight_decay: 0.01
+), 'interval': 1}
+{'name': 'Greg', 'module': Generator(
+  (synthesis): SynthesisNetwork(
+    (backbone): SynthesisNetwork(
+      w_dim=512, num_ws=12, img_resolution=128, img_channels=512, num_fp16_res=4
+      (b4): SynthesisBlock(
+        resolution=4, architecture=skip
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=4, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b8): SynthesisBlock(
+        resolution=8, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=8, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=8, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b16): SynthesisBlock(
+        resolution=16, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=16, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=16, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b32): SynthesisBlock(
+        resolution=32, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=32, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=32, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b64): SynthesisBlock(
+        resolution=64, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=64, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=512, out_channels=512, w_dim=512, resolution=64, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=512, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+      )
+      (b128): SynthesisBlock(
+        resolution=128, architecture=skip
+        (conv0): SynthesisLayer(
+          in_channels=512, out_channels=256, w_dim=512, resolution=128, up=2, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=512, activation=linear)
+        )
+        (conv1): SynthesisLayer(
+          in_channels=256, out_channels=256, w_dim=512, resolution=128, up=1, activation=lrelu
+          (affine): FullyConnectedLayer(in_features=512, out_features=256, activation=linear)
+        )
+        (torgb): ToRGBLayer(
+          in_channels=256, out_channels=512, w_dim=512
+          (affine): FullyConnectedLayer(in_features=512, out_features=256, activation=linear)
+        )
+      )
+    )
+    (gaussian_decoder): GaussianDecoder(
+      (mlp): MLP(
+        (layers): Sequential(
+          (0): Linear(in_features=512, out_features=128, bias=True)
+          (1): SiLU(inplace=True)
+          (2): Linear(in_features=128, out_features=128, bias=True)
+          (3): SiLU(inplace=True)
+          (4): Linear(in_features=128, out_features=128, bias=True)
+        )
+      )
+      (decoders): ModuleList(
+        (0): Linear(in_features=128, out_features=3, bias=True)
+        (1): Linear(in_features=128, out_features=4, bias=True)
+        (2): Linear(in_features=128, out_features=1, bias=True)
+        (3): Linear(in_features=128, out_features=3, bias=True)
+        (4): Linear(in_features=128, out_features=3, bias=True)
+      )
+    )
+  )
+  (mapping): MappingNetwork(
+    z_dim=512, c_dim=0, w_dim=512, num_ws=12
+    (fc0): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc1): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc2): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc3): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc4): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc5): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc6): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+    (fc7): FullyConnectedLayer(in_features=512, out_features=512, activation=lrelu)
+  )
+), 'opt': AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: [0.0, 0.9919919678228657]
+    capturable: False
+    eps: 1e-08
+    foreach: None
+    lr: 0.0016
+    maximize: False
+    weight_decay: 0.01
+), 'interval': 4}
+{'name': 'Dmain', 'module': Discriminator(
+  c_dim=0, img_resolution=128, img_channels=3
+  (b128): DiscriminatorBlock(
+    resolution=128, architecture=resnet
+    (fromrgb): Conv2dLayer(in_channels=3, out_channels=256, activation=lrelu, up=1, down=1)
+    (conv0): Conv2dLayer(in_channels=256, out_channels=256, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=256, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=256, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b64): DiscriminatorBlock(
+    resolution=64, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b32): DiscriminatorBlock(
+    resolution=32, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b16): DiscriminatorBlock(
+    resolution=16, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b8): DiscriminatorBlock(
+    resolution=8, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b4): DiscriminatorEpilogue(
+    resolution=4, architecture=resnet
+    (mbstd): MinibatchStdLayer(group_size=4, num_channels=1)
+    (conv): Conv2dLayer(in_channels=513, out_channels=512, activation=lrelu, up=1, down=1)
+    (fc): FullyConnectedLayer(in_features=8192, out_features=512, activation=lrelu)
+    (out): FullyConnectedLayer(in_features=512, out_features=1, activation=linear)
+  )
+), 'opt': AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: [0.0, 0.9905854573074332]
+    capturable: False
+    eps: 1e-08
+    foreach: None
+    lr: 0.0018823529411764706
+    maximize: False
+    weight_decay: 0.01
+), 'interval': 1}
+{'name': 'Dreg', 'module': Discriminator(
+  c_dim=0, img_resolution=128, img_channels=3
+  (b128): DiscriminatorBlock(
+    resolution=128, architecture=resnet
+    (fromrgb): Conv2dLayer(in_channels=3, out_channels=256, activation=lrelu, up=1, down=1)
+    (conv0): Conv2dLayer(in_channels=256, out_channels=256, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=256, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=256, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b64): DiscriminatorBlock(
+    resolution=64, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b32): DiscriminatorBlock(
+    resolution=32, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b16): DiscriminatorBlock(
+    resolution=16, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b8): DiscriminatorBlock(
+    resolution=8, architecture=resnet
+    (conv0): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=1)
+    (conv1): Conv2dLayer(in_channels=512, out_channels=512, activation=lrelu, up=1, down=2)
+    (skip): Conv2dLayer(in_channels=512, out_channels=512, activation=linear, up=1, down=2)
+  )
+  (b4): DiscriminatorEpilogue(
+    resolution=4, architecture=resnet
+    (mbstd): MinibatchStdLayer(group_size=4, num_channels=1)
+    (conv): Conv2dLayer(in_channels=513, out_channels=512, activation=lrelu, up=1, down=1)
+    (fc): FullyConnectedLayer(in_features=8192, out_features=512, activation=lrelu)
+    (out): FullyConnectedLayer(in_features=512, out_features=1, activation=linear)
+  )
+), 'opt': AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: [0.0, 0.9905854573074332]
+    capturable: False
+    eps: 1e-08
+    foreach: None
+    lr: 0.0018823529411764706
+    maximize: False
+    weight_decay: 0.01
+), 'interval': 16}
