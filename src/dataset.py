@@ -110,10 +110,11 @@ class SyntheticDataset(Dataset):
             pose = np.loadtxt(f)
 
         with self._open_file(intrinsics_path) as f:
-            intrinsics = np.loadtxt(f) / 512.0
-            intrinsics[-1] = 1.0
+            intrinsics = np.loadtxt(f).reshape(3, 3)
+            fovx = 2 * np.arctan(intrinsics[0, 2] / intrinsics[0, 0])
+            fovy = 2 * np.arctan(intrinsics[1, 2] / intrinsics[1, 1])
 
-        return np.concatenate((pose, intrinsics), dtype=np.float32)
+        return np.concatenate((pose, np.array([fovx, fovy])), dtype=np.float32)
 
     def __len__(self):
         return len(self._all_images)
