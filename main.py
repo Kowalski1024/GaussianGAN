@@ -5,17 +5,21 @@ import hydra
 from omegaconf import OmegaConf, DictConfig
 import torch
 
+from src.network.generator import ImageGenerator
+# from src.network.discriminator import Discriminator
+from src.utils.training import get_dataset
 from conf.main_config import MainConfig
-from src.train import LSGAN
-from pytorch_lightning.trainer import Trainer
+from pytorch_lightning.trainer import Trainer, seed_everything
 from src.utils.pylogger import RankedLogger
 from src.utils.instantiators import instantiate_loggers
+from src.loss.lsgan_loss import LSGANLoss
+from src.network.networks_stylegan2 import Discriminator
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
 
 @hydra.main(config_path="conf", config_name="main_config", version_base="1.3")
-def main(cfg: DictConfig) -> None:
+def main(cfg: MainConfig) -> None:
     """Main function for the pruning entry point
 
     Args:
@@ -27,10 +31,27 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info(f"Hydra output directory: {hydra_output_dir}")
 
+    seed_everything(cfg.seed)
+
     loggers = instantiate_loggers(cfg.logger)
 
-    model = LSGAN(cfg)
-    trainer = Trainer(max_epochs=100, limit_train_batches=10, log_every_n_steps=4, logger=loggers)
+    generator = ImageGenerator(
+        config=cfg.generator, image_resolution=cfg.image_resolution
+    )
+    # discriminator = Discriminator(
+    #     config=cfg.discriminator, image_resolution=cfg.image_resolution
+    # )
+    discriminator = Discriminator()
+    dataset = get_dataset(cfg.dataset.data_dir)
+
+    model = LSGANLoss(
+        use_stylemix=True,
+        generator=generator,
+        discriminator=discriminator,
+        dataset=dataset,
+        main_config=cfg,
+    )
+    trainer = Trainer(max_epochs=100, limit_train_batches=16, log_every_n_steps=4, logger=loggers)
     trainer.fit(model)
 
 
