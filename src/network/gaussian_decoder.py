@@ -18,12 +18,12 @@ class GaussianDecoder(nn.Module):
         self.xyz_offset = xyz_offset
         self.restrict_offset = restrict_offset
 
-        self.mlp = nn.Sequential(
-            nn.Linear(in_channels, 128),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(128, 128),
-            nn.LeakyReLU(inplace=True),
-        )
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(in_channels, 128),
+        #     nn.LeakyReLU(inplace=True),
+        #     nn.Linear(128, 128),
+        #     nn.LeakyReLU(inplace=True),
+        # )
 
         self.feature_channels = {
             "scaling": 3,
@@ -49,10 +49,16 @@ class GaussianDecoder(nn.Module):
             elif key == "opacity":
                 torch.nn.init.constant_(layer.bias, np.log(0.1 / (1 - 0.1)))
 
-            self.decoders.append(layer)
+            self.decoders.append(nn.Sequential(
+                nn.Linear(in_channels, 128),
+                nn.SiLU(inplace=True),
+                nn.Linear(128, 128),
+                nn.SiLU(inplace=True),
+                layer,
+            ))
 
-    def forward(self, x, pts):
-        x = self.mlp(x)
+    def forward(self, x, pts=None):
+        # x = self.mlp(x)
 
         ret = {}
         for k, layer in zip(self.feature_channels.keys(), self.decoders):
@@ -61,7 +67,7 @@ class GaussianDecoder(nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.1)
+                v = torch.clamp(v, min=0, max=0.02)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":

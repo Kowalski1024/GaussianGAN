@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import rff
 
-from torch_geometric.nn import global_max_pool, knn_graph
+from torch_geometric.nn import global_max_pool, knn_graph, LayerNorm, global_mean_pool
 from torch_geometric.data import Data
 
 from .layers import SyntheticBlock, StyleLINKX
@@ -13,7 +13,7 @@ from conf.main_config import GeneratorConfig
 
 
 class CloudGenerator(nn.Module):
-    def __init__(self, channels=128, style_channels=128, num_layers=2):
+    def __init__(self, channels=256, style_channels=256, num_layers=2):
         super().__init__()
         self.style_channels = style_channels
 
@@ -81,15 +81,16 @@ class GaussiansGenerator(nn.Module):
     ):
         super().__init__()
 
-        self.synthetic_block = StyleLINKX(
-            num_nodes=points,
-            in_channels=in_channels,
-            hidden_channels=hidden_channels,
-            out_channels=out_channels,
-            style_channels=style_channels,
-            num_layers=num_layers,
-            **linkx_kwargs,
-        )
+        # self.synthetic_block = StyleLINKX(
+        #     num_nodes=points,
+        #     in_channels=in_channels,
+        #     hidden_channels=hidden_channels,
+        #     out_channels=out_channels,
+        #     style_channels=style_channels,
+        #     num_layers=num_layers,
+        #     **linkx_kwargs,
+        # )
+        self.synthetic_block = SyntheticBlock(in_channels, out_channels, style_channels)
 
     def forward(self, x, pos, edge_index, batch, style):
         """
@@ -103,7 +104,7 @@ class GaussiansGenerator(nn.Module):
         Returns:
             x: [N, out_channels]
         """
-        return self.synthetic_block(x, edge_index, style)
+        return self.synthetic_block(x, pos, edge_index, style)
 
 
 class ImageGenerator(nn.Module):
@@ -140,9 +141,9 @@ class ImageGenerator(nn.Module):
         )
 
         self.style_head = nn.Sequential(
-            nn.Linear(config.z_dim + 3, 128),
+            nn.Linear(config.z_dim + 3, config.z_dim),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(128, 128),
+            nn.Linear(config.z_dim, config.z_dim),
             nn.LeakyReLU(inplace=True),
         )
 
@@ -161,16 +162,17 @@ class ImageGenerator(nn.Module):
 
             sphere = Data(pos=sphere)
             pos, batch = sphere.pos, sphere.batch
-            edge_index = knn_graph(sphere.pos, k=self.config.knn, batch=sphere.batch)
+            edge_index = knn_graph(pos, k=self.config.knn, batch=batch)
 
         images = []
         for camera, z in zip(cameras, zs):
-            style = torch.cat([z, sphere.pos], dim=-1)
+            style = torch.cat([pos, z], dim=-1)
             style = self.style_head(style)
 
             point_cloud, points_features = self.point_encoder(
                 pos, edge_index, batch, style
             )
+            edge_index = knn_graph(point_cloud, k=self.config.knn, batch=batch)
             gaussian = self.gaussians(
                 points_features, point_cloud, edge_index, batch, style
             )

@@ -72,6 +72,30 @@ class AdaptivePointNorm(nn.Module):
         return x
 
 
+class EdgeConv(gnn.MessagePassing):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__(aggr="add")
+
+        self.mlp = torch.nn.Sequential(
+            nn.Linear(in_channels + 3, out_channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(out_channels, out_channels),
+            nn.LeakyReLU(inplace=True),
+        )
+
+    def forward(
+        self,
+        h,
+        pos,
+        edge_index,
+    ):
+        return self.propagate(edge_index, h=h, pos=pos)
+
+    def message(self, h_j, pos_j, pos_i):
+        edge_feat = torch.cat([h_j, pos_j - pos_i], dim=-1)
+        return self.mlp(edge_feat)
+
+
 class PointGNNConv(nn.Module):
     def __init__(self, in_channels, out_channels, aggr="sum"):
         super().__init__()
@@ -195,7 +219,7 @@ class StyleMLP(nn.Module):
         Args:
             x: [N, in_channels]
             style: [N, style_channels]
-            
+
         Returns:
             x: [N, out_channels]
         """
@@ -256,7 +280,7 @@ class StyleLINKX(torch.nn.Module):
         Returns:
             x: [N, out_channels]
         """
-        
+
         out = self.edge_lin(edge_index, None)
 
         if self.edge_norm is not None and self.edge_mlp is not None:
