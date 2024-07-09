@@ -64,19 +64,19 @@ class LSGANLoss(BaseLoss):
             loss_fake = self.adversarial_loss(fake_logits, fake_label)
             loss_real = self.adversarial_loss(real_logits, real_label)
 
-            d_loss = (loss_fake + loss_real) / 2.0
+            d_loss = (loss_fake + loss_real) # / 2.0
             d_loss = d_loss.mul(gain)
-            self.manual_backward(d_loss)
+            self.manual_backward(d_loss.mean())
             opt_d.step()
             lr_mult = scheluder.step(d_loss.item())
 
-            self.real_acc_meter.update(real_logits.mean())
-            self.fake_acc_meter.update(fake_logits.mean())
+            self.real_score_meter.update(real_logits.mean())
+            self.fake_score_meter.update(fake_logits.mean())
 
             self.log_dict(
                 {
-                    "real_acc_avg": self.real_acc_meter.avg,
-                    "fake_acc_avg": self.fake_acc_meter.avg,
+                    "real_avg_score": self.real_score_meter.avg,
+                    "fake_avg_score": self.fake_score_meter.avg,
                 },
                 prog_bar=True,
             )
