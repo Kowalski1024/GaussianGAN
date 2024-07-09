@@ -9,6 +9,15 @@ class OptimizerConfig:
 
 
 @dataclass
+class ScheduledConfig:
+    ideal_loss: float = 0.5
+    x_min: float = 0.05
+    x_max: float = 0.05
+    h_min: float = 0.1
+    f_max: float = 2.0
+
+
+@dataclass
 class SGDOptimizerConfig(OptimizerConfig):
     _target_: str = "torch.optim.SGD"
 

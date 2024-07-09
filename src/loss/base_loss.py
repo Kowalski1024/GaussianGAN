@@ -1,26 +1,17 @@
-from pytorch_lightning.core import LightningModule
-import numpy as np
+import random
+from pathlib import Path
+
+import hydra
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
-import random
-from torch.utils.data import Dataset, DataLoader
+from pytorch_lightning.core import LightningModule
 from torch.optim import Optimizer
+from torch.utils.data import DataLoader, Dataset
 
-from src.network.generator import ImageGenerator
-from src.network.discriminator import Discriminator
-from src.dataset import SyntheticDataset
-from src.utils.pylogger import RankedLogger
-from src.utils.training import (
-    create_image_grid,
-    fibonacci_sphere,
-    AverageValueMeter,
-    setup_snapshot_image_grid,
-)
 from conf.main_config import MainConfig
-import hydra
-from pathlib import Path
+from src.utils.pylogger import RankedLogger
+from src.utils.scheluder import GapAwareLRScheduler
+import src.utils.training as training_utils
 
 logger = RankedLogger(__name__)
 
@@ -45,7 +36,7 @@ class BaseLoss(LightningModule):
         self.batch_size = main_config.dataset.batch_size
         self.z_dim = main_config.generator.z_dim
         self.points = main_config.generator.points
-        self.sphere = fibonacci_sphere(self.points)
+        self.sphere = training_utils.fibonacci_sphere(self.points)
         self.sphere_dist = torch.cdist(self.sphere, self.sphere)
 
         # models
@@ -60,8 +51,8 @@ class BaseLoss(LightningModule):
         self.valid_z = valid_z.repeat(self.grid_size[1], 1, 1)
         self.images_path = Path(f"{self.main_config.paths.output_dir}/images")
         self.images_path.mkdir(parents=True, exist_ok=True)
-        self.real_acc_meter = AverageValueMeter()
-        self.fake_acc_meter = AverageValueMeter()
+        self.real_acc_meter = training_utils.AverageValueMeter()
+        self.fake_acc_meter = training_utils.AverageValueMeter()
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
@@ -87,16 +78,16 @@ class BaseLoss(LightningModule):
             logger.info("Exporting real images")
             image_path = self.images_path / "real.png"
 
-            images, labels = setup_snapshot_image_grid(
+            images, labels = training_utils.setup_snapshot_image_grid(
                 self.dataset, grid_size=self.grid_size
             )
-            real_img = create_image_grid(images, [-1, 1], grid_size=self.grid_size)
+            real_img = training_utils.create_image_grid(images, [-1, 1], grid_size=self.grid_size)
             real_img.save(image_path)
 
             self.labels = torch.tensor(labels, dtype=torch.float32)
 
     def on_train_epoch_start(self) -> None:
-        if self.current_epoch % 10 == 0:
+        if self.current_epoch % self.main_config.training.image_save_interval == 0:
             z = self.valid_z.to(self.device)
             sphere = self.sphere.to(self.device)
             camera = self.labels.to(self.device)
@@ -105,7 +96,7 @@ class BaseLoss(LightningModule):
 
             with torch.no_grad():
                 fake_imgs = self.generator(z, sphere, camera)
-                fake_img = create_image_grid(
+                fake_img = training_utils.create_image_grid(
                     fake_imgs.cpu().numpy(),
                     drange=(-1, 1),
                     grid_size=self.grid_size,
@@ -120,8 +111,11 @@ class BaseLoss(LightningModule):
         opt_d = hydra.utils.instantiate(
             self.main_config.discriminator.optimizer, self.discriminator.parameters()
         )
+        d_scheduler = GapAwareLRScheduler(
+            opt_d, **self.main_config.discriminator.scheluder
+        )
 
-        return opt_g, opt_d
+        return [opt_g, opt_d], d_scheduler
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

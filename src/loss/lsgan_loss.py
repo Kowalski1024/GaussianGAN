@@ -35,6 +35,7 @@ class LSGANLoss(BaseLoss):
 
     def training_step(self, batch, batch_idx):
         opt_g, opt_d = self.optimizers()
+        scheluder = self.lr_schedulers()
 
         real_imgs, camera = batch
         sphere = self.sphere.to(real_imgs.device)
@@ -67,6 +68,7 @@ class LSGANLoss(BaseLoss):
             d_loss = d_loss.mul(gain)
             self.manual_backward(d_loss)
             opt_d.step()
+            scheluder.step(d_loss.item())
 
             real_correct = (real_logits >= 0.5).float().sum()
             real_acc = real_correct / float(real_logits.size(0))
