@@ -17,6 +17,7 @@ class GapAwareLRScheduler:
         self.optimizer = optimizer
         self.ideal_loss = ideal_loss
         self.smoothed_disc_loss = ideal_loss
+        self.learning_rates = [group["lr"] for group in optimizer.param_groups]
         self.x_min = x_min
         self.x_max = x_max
         self.h_min = h_min
@@ -42,10 +43,13 @@ class GapAwareLRScheduler:
         f_x = np.clip(np.power(self.f_max, x / self.x_max), 1.0, self.f_max)
         h_x = np.clip(np.power(self.h_min, x / self.x_min), self.h_min, 1.0)
 
-        s_x = np.where(loss > self.ideal_loss, f_x, h_x)
+        if loss > self.ideal_loss:
+            s_x = f_x
+        else:
+            s_x = h_x
 
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] = param_group["lr"] * s_x
+        for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
+            param_group["lr"] = lr * s_x
 
     def state_dict(self):
         """
