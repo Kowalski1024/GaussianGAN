@@ -51,8 +51,8 @@ class BaseLoss(LightningModule):
         self.valid_z = valid_z.repeat(self.grid_size[1], 1, 1)
         self.images_path = Path(f"{self.main_config.paths.output_dir}/images")
         self.images_path.mkdir(parents=True, exist_ok=True)
-        self.real_acc_meter = training_utils.AverageValueMeter()
-        self.fake_acc_meter = training_utils.AverageValueMeter()
+        self.real_score_meter = training_utils.AverageValueMeter()
+        self.fake_score_meter = training_utils.AverageValueMeter()
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
@@ -81,7 +81,9 @@ class BaseLoss(LightningModule):
             images, labels = training_utils.setup_snapshot_image_grid(
                 self.dataset, grid_size=self.grid_size
             )
-            real_img = training_utils.create_image_grid(images, [-1, 1], grid_size=self.grid_size)
+            real_img = training_utils.create_image_grid(
+                images, [-1, 1], grid_size=self.grid_size
+            )
             real_img.save(image_path)
 
             self.labels = torch.tensor(labels, dtype=torch.float32)

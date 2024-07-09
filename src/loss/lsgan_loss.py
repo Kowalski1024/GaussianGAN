@@ -64,7 +64,7 @@ class LSGANLoss(BaseLoss):
             loss_fake = self.adversarial_loss(fake_logits, fake_label)
             loss_real = self.adversarial_loss(real_logits, real_label)
 
-            d_loss = (loss_fake + loss_real) # / 2.0
+            d_loss = (loss_fake + loss_real) / 2.0
             d_loss = d_loss.mul(gain)
             self.manual_backward(d_loss.mean())
             opt_d.step()
