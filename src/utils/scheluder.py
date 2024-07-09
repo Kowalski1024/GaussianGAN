@@ -51,6 +51,8 @@ class GapAwareLRScheduler:
         for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
             param_group["lr"] = lr * s_x
 
+        return s_x
+
     def state_dict(self):
         """
         Return the state of the scheduler as a dictionary.

@@ -44,7 +44,7 @@ class LSGANLoss(BaseLoss):
 
         # Train discriminator
         d_loss = None
-        if  batch_idx % (gain := self.main_config.training.discriminator_interval) == 0:
+        if batch_idx % (gain := self.main_config.training.discriminator_interval) == 0:
             opt_d.zero_grad()
             with torch.no_grad():
                 fake_imgs = self.generator(noise, sphere, camera)
@@ -68,7 +68,7 @@ class LSGANLoss(BaseLoss):
             d_loss = d_loss.mul(gain)
             self.manual_backward(d_loss)
             opt_d.step()
-            scheluder.step(d_loss.item())
+            lr_mult = scheluder.step(d_loss.item())
 
             real_correct = (real_logits >= 0.5).float().sum()
             real_acc = real_correct / float(real_logits.size(0))
@@ -89,6 +89,7 @@ class LSGANLoss(BaseLoss):
             self.log_dict(
                 {
                     "d_loss": d_loss,
+                    "lr_mult": lr_mult,
                     "fake_score": fake_logits.mean(),
                     "real_score": real_logits.mean(),
                     "real_acc": real_acc,
