@@ -96,20 +96,21 @@ class BaseLoss(LightningModule):
             self.labels = torch.tensor(labels, dtype=torch.float32)
 
     def on_train_epoch_start(self) -> None:
-        z = self.valid_z.to(self.device)
-        sphere = self.sphere.to(self.device)
-        camera = self.labels.to(self.device)
+        if self.current_epoch % 10 == 0:
+            z = self.valid_z.to(self.device)
+            sphere = self.sphere.to(self.device)
+            camera = self.labels.to(self.device)
 
-        image_path = Path(self.images_path / f"fake_{self.current_epoch}.png")
+            image_path = Path(self.images_path / f"fake_{self.current_epoch}.png")
 
-        with torch.no_grad():
-            fake_imgs = self.generator(z, sphere, camera)
-            fake_img = create_image_grid(
-                fake_imgs.cpu().numpy(),
-                drange=(-1, 1),
-                grid_size=self.grid_size,
-            )
-            fake_img.save(image_path)
+            with torch.no_grad():
+                fake_imgs = self.generator(z, sphere, camera)
+                fake_img = create_image_grid(
+                    fake_imgs.cpu().numpy(),
+                    drange=(-1, 1),
+                    grid_size=self.grid_size,
+                )
+                fake_img.save(image_path)
         return super().on_train_epoch_start()
 
     def configure_optimizers(self) -> tuple[Optimizer, Optimizer]:
