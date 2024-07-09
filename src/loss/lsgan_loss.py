@@ -70,14 +70,8 @@ class LSGANLoss(BaseLoss):
             opt_d.step()
             lr_mult = scheluder.step(d_loss.item())
 
-            real_correct = (real_logits >= 0.5).float().sum()
-            real_acc = real_correct / float(real_logits.size(0))
-
-            fake_correct = (fake_logits < 0.5).float().sum()
-            fake_acc = fake_correct / float(fake_logits.size(0))
-
-            self.real_acc_meter.update(real_acc)
-            self.fake_acc_meter.update(fake_acc)
+            self.real_acc_meter.update(real_logits.mean())
+            self.fake_acc_meter.update(fake_logits.mean())
 
             self.log_dict(
                 {
@@ -92,8 +86,6 @@ class LSGANLoss(BaseLoss):
                     "lr_mult": lr_mult,
                     "fake_score": fake_logits.mean(),
                     "real_score": real_logits.mean(),
-                    "real_acc": real_acc,
-                    "fake_acc": fake_acc,
                 }
             )
 
