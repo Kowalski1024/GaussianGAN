@@ -9,15 +9,6 @@ class OptimizerConfig:
 
 
 @dataclass
-class ScheduledConfig:
-    ideal_loss: float = 0.5
-    x_min: float = 0.05
-    x_max: float = 0.05
-    h_min: float = 0.1
-    f_max: float = 2.0
-
-
-@dataclass
 class SGDOptimizerConfig(OptimizerConfig):
     _target_: str = "torch.optim.SGD"
 
@@ -34,3 +25,30 @@ class AdamWOptimizerConfig(OptimizerConfig):
     _target_: str = "torch.optim.AdamW"
     weight_decay: float = 0.01
     betas: tuple[float, float] = (0.5, 0.99)
+
+
+@dataclass
+class ScheduledConfig:
+    ideal_loss: float = MISSING
+    x_min: float = MISSING
+    x_max: float = MISSING
+    h_min: float = MISSING
+    f_max: float = MISSING
+
+
+@dataclass
+class LSGANSchedulerConfig(ScheduledConfig):
+    ideal_loss: float = 0.5
+    x_min: float = 0.05
+    x_max: float = 0.05
+    h_min: float = 0.1
+    f_max: float = 2.0
+
+
+@dataclass
+class WGANSchedulerConfig(ScheduledConfig):
+    ideal_loss: float = 0.0
+    x_min: float = 0.1
+    x_max: float = 0.1
+    h_min: float = 0.1
+    f_max: float = 2.0

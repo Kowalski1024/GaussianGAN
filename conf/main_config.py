@@ -51,7 +51,7 @@ class DiscriminatorConfig:
         default_factory=optimizers.AdamWOptimizerConfig
     )
     scheluder: optimizers.ScheduledConfig = field(
-        default_factory=optimizers.ScheduledConfig
+        default_factory=optimizers.LSGANSchedulerConfig
     )
 
 
@@ -59,6 +59,7 @@ class DiscriminatorConfig:
 class TrainingConfig:
     generator_interval: int = 1
     discriminator_interval: int = 1
+    generator_warmup: int = 1
     loss: losses.LossConfig = field(default_factory=losses.LSGANLossConfig)
 
     image_grid_size: tuple[int, int] = (16, 16)

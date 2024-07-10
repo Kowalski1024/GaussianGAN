@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from conf.main_config import MainConfig
 from src.utils.pylogger import RankedLogger
-from src.utils.scheluder import GapAwareLRScheduler
+from src.utils.scheluder import GapAwareLRScheduler, LinearWarmupScheduler
 import src.utils.training as training_utils
 
 logger = RankedLogger(__name__)
@@ -113,11 +113,14 @@ class BaseLoss(LightningModule):
         opt_d = hydra.utils.instantiate(
             self.main_config.discriminator.optimizer, self.discriminator.parameters()
         )
+        g_scheduler = LinearWarmupScheduler(
+            opt_g, self.main_config.training.generator_warmup
+        )
         d_scheduler = GapAwareLRScheduler(
             opt_d, **self.main_config.discriminator.scheluder
         )
 
-        return [opt_g, opt_d], d_scheduler
+        return [opt_g, opt_d], [g_scheduler, d_scheduler]
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
