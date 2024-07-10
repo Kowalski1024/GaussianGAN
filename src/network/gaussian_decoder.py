@@ -51,9 +51,9 @@ class GaussianDecoder(nn.Module):
 
             self.decoders.append(nn.Sequential(
                 nn.Linear(in_channels, 128),
-                nn.SiLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
                 nn.Linear(128, 128),
-                nn.SiLU(inplace=True),
+                nn.LeakyReLU(inplace=True),
                 layer,
             ))
 
@@ -67,7 +67,7 @@ class GaussianDecoder(nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.02)
+                v = torch.clamp(v, min=0, max=0.1)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":

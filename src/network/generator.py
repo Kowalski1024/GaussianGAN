@@ -23,16 +23,16 @@ class CloudGenerator(nn.Module):
 
         self.global_conv = nn.Sequential(
             nn.Linear(channels, channels),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(channels, channels),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(inplace=True),
         )
 
         self.tail = nn.Sequential(
             nn.Linear(channels * 2, channels),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(channels, channels // 2),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(channels // 2, 3),
             nn.Tanh(),
         )
@@ -81,16 +81,16 @@ class GaussiansGenerator(nn.Module):
     ):
         super().__init__()
 
-        # self.synthetic_block = StyleLINKX(
-        #     num_nodes=points,
-        #     in_channels=in_channels,
-        #     hidden_channels=hidden_channels,
-        #     out_channels=out_channels,
-        #     style_channels=style_channels,
-        #     num_layers=num_layers,
-        #     **linkx_kwargs,
-        # )
-        self.synthetic_block = SyntheticBlock(in_channels, out_channels, style_channels)
+        self.synthetic_block = StyleLINKX(
+            num_nodes=points,
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=out_channels,
+            style_channels=style_channels,
+            num_layers=num_layers,
+            **linkx_kwargs,
+        )
+        # self.synthetic_block = SyntheticBlock(in_channels, out_channels, style_channels)
 
     def forward(self, x, pos, edge_index, batch, style):
         """
@@ -104,7 +104,7 @@ class GaussiansGenerator(nn.Module):
         Returns:
             x: [N, out_channels]
         """
-        return self.synthetic_block(x, pos, edge_index, style)
+        return self.synthetic_block(x, edge_index, style)
 
 
 class ImageGenerator(nn.Module):
