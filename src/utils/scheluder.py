@@ -67,3 +67,53 @@ class GapAwareLRScheduler:
             state_dict: dictionary containing the state of the scheduler.
         """
         self.optimizer.load_state_dict(state_dict["optimizer"])
+
+
+class LinearWarmupScheduler:
+    def __init__(self, optimizer, warmup_steps):
+        """
+        Linear Warmup Scheduler for Adversarial Networks.
+
+        Args:
+            optimizer: PyTorch optimizer.
+            warmup_steps: number of steps for the warmup phase.
+        """
+        self.optimizer = optimizer
+        self.warmup_steps = warmup_steps if warmup_steps > 0 else 1
+        self.learning_rates = [group["lr"] for group in optimizer.param_groups]
+        self.steps = 1
+
+        for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
+            param_group["lr"] = lr * min(self.steps / (self.warmup_steps + 1), 1.0)
+
+    def zero_grad(self):
+        """
+        Zero the gradients of the optimizer.
+        """
+        self.optimizer.zero_grad()
+
+    def step(self):
+        """
+        Update the learning rate of the optimizer based on the current step.
+
+        Args:
+            step: current step of the training.
+        """
+        for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
+            param_group["lr"] = lr * min(self.steps / (self.warmup_steps + 1), 1.0)
+        self.steps += 1
+
+    def state_dict(self):
+        """
+        Return the state of the scheduler as a dictionary.
+        """
+        return {"optimizer": self.optimizer.state_dict()}
+
+    def load_state_dict(self, state_dict):
+        """
+        Load the state of the scheduler from a dictionary.
+
+        Args:
+            state_dict: dictionary containing the state of the scheduler.
+        """
+        self.optimizer.load_state_dict(state_dict["optimizer"])
