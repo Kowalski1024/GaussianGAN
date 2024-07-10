@@ -24,6 +24,7 @@ class BaseLoss(LightningModule):
         use_stylemix: bool,
         blur_sigma: float,
         blur_fade_epochs: int,
+        r1_gamma: float,
         generator: nn.Module,
         discriminator: nn.Module,
         dataset: Dataset,
@@ -38,6 +39,7 @@ class BaseLoss(LightningModule):
         self.blur_sigma = blur_sigma
         self.curr_blur_sigma = blur_sigma
         self.blur_fade_epochs = blur_fade_epochs
+        self.r1_gamma = r1_gamma
 
         # sphere
         self.batch_size = main_config.dataset.batch_size
@@ -87,6 +89,17 @@ class BaseLoss(LightningModule):
                 noise[i, idx[:cutoff]] = new_noise[i]
 
         return noise
+    
+    def r1_penalty(self, real_logits, real_images):
+        if self.r1_gamma == 0:
+            return 0
+        
+        grad_real = torch.autograd.grad(
+            real_logits.sum(), real_images, create_graph=True, only_inputs=True
+        )[0]
+        grad_penalty = grad_real.square().sum(dim=(1, 2, 3))
+        grad_penalty = grad_penalty * self.r1_gamma
+        return grad_penalty
 
     def setup(self, stage):
         if stage == "fit":

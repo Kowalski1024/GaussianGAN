@@ -25,6 +25,7 @@ class LSGANLoss(BaseLoss):
         use_stylemix: bool,
         blur_sigma: float,
         blur_fade_epochs: int,
+        r1_gamma: float,
         generator: nn.Module,
         discriminator: nn.Module,
         dataset: SyntheticDataset,
@@ -34,6 +35,7 @@ class LSGANLoss(BaseLoss):
             use_stylemix,
             blur_sigma,
             blur_fade_epochs,
+            r1_gamma,
             generator,
             discriminator,
             dataset,
@@ -48,6 +50,7 @@ class LSGANLoss(BaseLoss):
         scheluder_g, scheluder_d = self.lr_schedulers()
 
         real_imgs, camera = batch
+        real_imgs = real_imgs.detach().requires_grad_(self.r1_gamma != 0.0)
         sphere = self.sphere.to(real_imgs.device)
         noise = self.generate_noise(self.batch_size, self.use_stylemix, self.z_dim)
         noise = noise.to(real_imgs.device)
@@ -75,8 +78,8 @@ class LSGANLoss(BaseLoss):
             loss_real = self.adversarial_loss(real_logits, real_label)
 
             d_loss = (loss_fake + loss_real) / 2.0
-            d_loss = d_loss.mul(gain)
-            self.manual_backward(d_loss.mean())
+            r1_penalty = self.r1_penalty(real_logits, real_imgs)
+            self.manual_backward((d_loss + r1_penalty).mul(gain).mean())
             opt_d.step()
             lr_mult = scheluder_d.step(d_loss.item())
 
@@ -93,6 +96,7 @@ class LSGANLoss(BaseLoss):
             self.log_dict(
                 {
                     "d_loss": d_loss,
+                    "r1_penalty": r1_penalty.mean(),
                     "lr_mult": lr_mult,
                     "fake_score": fake_logits.mean(),
                     "real_score": real_logits.mean(),
