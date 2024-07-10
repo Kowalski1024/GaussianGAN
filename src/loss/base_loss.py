@@ -4,6 +4,8 @@ from pathlib import Path
 import hydra
 import torch
 import torch.nn as nn
+from torchvision.transforms import functional as F
+import numpy as np
 from pytorch_lightning.core import LightningModule
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -20,6 +22,8 @@ class BaseLoss(LightningModule):
     def __init__(
         self,
         use_stylemix: bool,
+        blur_sigma: float,
+        blur_fade_epochs: int,
         generator: nn.Module,
         discriminator: nn.Module,
         dataset: Dataset,
@@ -31,6 +35,9 @@ class BaseLoss(LightningModule):
 
         # config
         self.use_stylemix = use_stylemix
+        self.blur_sigma = blur_sigma
+        self.curr_blur_sigma = blur_sigma
+        self.blur_fade_epochs = blur_fade_epochs
 
         # sphere
         self.batch_size = main_config.dataset.batch_size
@@ -56,6 +63,14 @@ class BaseLoss(LightningModule):
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
+    
+    def run_discriminator(self, images, camera):
+        blur_size = int(self.curr_blur_sigma * 3)
+        blur_size += blur_size % 2 - 1
+        if blur_size > 0:
+            images = F.gaussian_blur(images, kernel_size=blur_size, sigma=self.curr_blur_sigma)
+        
+        return self.discriminator(images, camera)
 
     def generate_noise(
         self, batch_size: int, use_stylemix: bool, z_dim: int, std: float = 1.0
@@ -89,6 +104,12 @@ class BaseLoss(LightningModule):
             self.labels = torch.tensor(labels, dtype=torch.float32)
 
     def on_train_epoch_start(self) -> None:
+        if self.current_epoch <= self.blur_fade_epochs:
+            decay_rate = -np.log(1e-2) / self.blur_fade_epochs
+            self.curr_blur_sigma = self.blur_sigma * np.exp(-decay_rate * self.current_epoch)
+        else:
+            self.curr_blur_sigma = 0
+
         if self.current_epoch % self.main_config.training.image_save_interval == 0:
             z = self.valid_z.to(self.device)
             sphere = self.sphere.to(self.device)

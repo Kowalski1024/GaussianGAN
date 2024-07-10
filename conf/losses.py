@@ -6,6 +6,8 @@ from omegaconf import MISSING
 class LossConfig:
     _target_: str = MISSING
     use_stylemix: bool = True
+    blur_sigma: float = 10.0
+    blur_fade_epochs: int = 100
 
 
 @dataclass

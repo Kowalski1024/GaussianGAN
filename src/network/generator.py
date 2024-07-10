@@ -13,9 +13,10 @@ from conf.main_config import GeneratorConfig
 
 
 class CloudGenerator(nn.Module):
-    def __init__(self, channels=256, style_channels=256, num_layers=2):
+    def __init__(self, channels=256, style_channels=256, num_layers=2, xyz_mult=1.0):
         super().__init__()
         self.style_channels = style_channels
+        self.xyz_mult = xyz_mult
 
         self.encoder = rff.layers.GaussianEncoding(
             sigma=10.0, input_size=3, encoded_size=channels // 2
@@ -65,7 +66,7 @@ class CloudGenerator(nn.Module):
         h = h.repeat(x.size(0), 1)
 
         x = torch.cat([x, h], dim=-1)
-        return self.tail(x), x
+        return self.tail(x) * self.xyz_mult, x
 
 
 class GaussiansGenerator(nn.Module):

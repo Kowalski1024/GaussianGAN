@@ -20,20 +20,21 @@ class GeneratorConfig:
     points: int = 4096
     z_dim: int = 256
     knn: int = 6
+    xyz_mult: float = 1.0
 
     cloud_channels: int = 128
-    cloud_layers: int = 2
+    cloud_layers: int = 1
 
     gaussian_channels: int = 256
-    gaussian_layers: int = 2
+    gaussian_layers: int = 3
 
     decoder_channels: int = 256
     decoder_layers: int = 2
 
     shs_degree: int = 3
     use_rgb: bool = True
-    xyz_offset: bool = False
-    restrict_offset: bool = False
+    xyz_offset: bool = True
+    restrict_offset: bool = True
 
     optimizer: optimizers.OptimizerConfig = field(
         default_factory=optimizers.AdamWOptimizerConfig
@@ -59,7 +60,7 @@ class DiscriminatorConfig:
 class TrainingConfig:
     generator_interval: int = 1
     discriminator_interval: int = 1
-    generator_warmup: int = 1
+    generator_warmup: int = 10
     loss: losses.LossConfig = field(default_factory=losses.LSGANLossConfig)
 
     image_grid_size: tuple[int, int] = (16, 16)
