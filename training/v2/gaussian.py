@@ -61,7 +61,7 @@ class GaussianDecoder(nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.1)
+                v = torch.clamp(v, min=0, max=0.03)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
@@ -71,7 +71,7 @@ class GaussianDecoder(nn.Module):
             elif k == "xyz":
                 max_step = 1.2 / 32
                 v = (torch.sigmoid(v) - 0.5) * max_step
-                v = (v + pc) * 0.8
+                v = v + pc
                 # if pc is not None:
                 #     v = v + pc
                 # v = torch.tanh(v) * 0.35

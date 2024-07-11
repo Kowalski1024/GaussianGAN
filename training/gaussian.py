@@ -356,20 +356,20 @@ class SynthesisNetwork(torch.nn.Module):
 
     def forward(self, ws, c, **block_kwargs):
         # check if c is empty tensor
-        if c.numel() == 0:
-            poses = torch.stack([
-                    pose_spherical(
-                        theta=np.random.uniform(low=-180, high=180),
-                        phi=90 - uniform_circle(low=90, high=180),
-                        radius=1.25
-                        )
-                    for _ in range(ws.shape[0])
-                ], dim=0).to(c.device)
-            poses[:, :3, 1:3] *= -1
-            intrinsics = torch.tensor([[512.0, 0.0, 256.0], [0.0, 512.0, 256.0], [0.0, 0.0, 1.0]], device=c.device).unsqueeze(0).repeat(ws.shape[0], 1, 1)
-        else:
-            poses = c[:, :16].view(-1, 4, 4).detach()
-            intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
+        # if c.numel() == 0:
+        #     poses = torch.stack([
+        #             pose_spherical(
+        #                 theta=np.random.uniform(low=-180, high=180),
+        #                 phi=90 - uniform_circle(low=90, high=180),
+        #                 radius=1.25
+        #                 )
+        #             for _ in range(ws.shape[0])
+        #         ], dim=0).to(c.device)
+        #     poses[:, :3, 1:3] *= -1
+        #     intrinsics = torch.tensor([[512.0, 0.0, 256.0], [0.0, 512.0, 256.0], [0.0, 0.0, 1.0]], device=c.device).unsqueeze(0).repeat(ws.shape[0], 1, 1)
+        # else:
+        poses = c[:, :16].view(-1, 4, 4).detach()
+        intrinsics = c[:, 16:25].view(-1, 3, 3).detach() * 512
         cameras = extract_cameras(poses, intrinsics)
 
         hidden_features = self.backbone(ws, **block_kwargs)
@@ -406,6 +406,6 @@ class Generator(torch.nn.Module):
         self.mapping = stylegan2.MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
-        ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+        ws = self.mapping(z, torch.zeros([], device=c.device), truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
         img = self.synthesis(ws, c, update_emas=update_emas, **synthesis_kwargs)
         return img

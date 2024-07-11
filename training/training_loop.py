@@ -22,6 +22,7 @@ from torch_utils import misc
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
+from training.scheluder import GapAwareLRScheduler
 
 import legacy
 from metrics import metric_main
@@ -222,14 +223,19 @@ def training_loop(
             # else:
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
+        if name == 'D':
+            log4 = np.log(4)
+            scheluder = GapAwareLRScheduler(opt, ideal_loss=log4, x_min=0.1*log4, x_max=0.1*log4, h_min=0.01)
     for phase in phases:
         phase.start_event = None
         phase.end_event = None
         if rank == 0:
             phase.start_event = torch.cuda.Event(enable_timing=True)
             phase.end_event = torch.cuda.Event(enable_timing=True)
-
-    print(phases)
+    
+    loss.scheluder = scheluder
+    if rank == 0:
+        print(phases)
 
     # Export sample images.
     grid_size = None

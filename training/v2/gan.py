@@ -4,7 +4,7 @@ from torch import nn
 from .gaussian import GaussianDecoder, render
 from .camera import extract_cameras, generate_cameras
 from training import networks_stylegan2 as stylegan2
-from torch_geometric.nn import knn_graph, PointGNNConv, global_max_pool, InstanceNorm
+from torch_geometric.nn import knn_graph, PointGNNConv, global_max_pool, InstanceNorm, MessagePassing, global_mean_pool
 from torch_geometric.nn.norm import LayerNorm
 from torch_geometric.data import Data, Batch
 from torch_geometric.utils import to_dense_batch
@@ -102,7 +102,6 @@ class StyleLinearLayer(nn.Module):
         self.linear = nn.Linear(in_dim, out_dim)
         self.adain = AdaptivePointNorm(out_dim, w_dim)
         self.noise_strength = nn.Parameter(torch.zeros(1)) if noise else None
-        self.affine = nn.Linear(w_dim, in_dim)
 
     def forward(self, x, w):
         x = self.linear(x)
@@ -236,6 +235,30 @@ class StyleLINKX(torch.nn.Module):
             f"num_edge_layers={self.num_edge_layers}, "
             f"num_node_layers={self.num_node_layers})"
         )
+    
+
+class EdgeConv(MessagePassing):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__(aggr="add")
+
+        self.mlp = torch.nn.Sequential(
+            nn.Linear(in_channels + 3, out_channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(out_channels, out_channels),
+            nn.LeakyReLU(inplace=True),
+        )
+
+    def forward(
+        self,
+        h,
+        pos,
+        edge_index,
+    ):
+        return self.propagate(edge_index, h=h, pos=pos)
+
+    def message(self, h_j, pos_j, pos_i):
+        edge_feat = torch.cat([h_j, pos_j - pos_i], dim=-1)
+        return self.mlp(edge_feat)
 
 
 class GNNConv(nn.Module):
@@ -244,7 +267,6 @@ class GNNConv(nn.Module):
 
         self.mlp_h = nn.Sequential(
             nn.Linear(channels, channels),
-            # LayerNorm(channels),
             nn.LeakyReLU(inplace=True),
             nn.Linear(channels, 3),
             nn.Tanh(),
@@ -252,13 +274,11 @@ class GNNConv(nn.Module):
 
         self.mlp_f = nn.Sequential(
             nn.Linear(channels + 3, channels),
-            # LayerNorm(channels),
             nn.LeakyReLU(inplace=True),
         )
 
         self.mlp_g = nn.Sequential(
             nn.Linear(channels, channels),
-            # LayerNorm(channels),
             nn.LeakyReLU(inplace=True),
             nn.Linear(channels, channels),
         )
@@ -305,10 +325,8 @@ class CloudGenerator(nn.Module):
 
         self.global_conv = nn.Sequential(
             nn.Linear(128, 128),
-            # LayerNorm(128),
             nn.LeakyReLU(inplace=True),
             nn.Linear(128, 128),
-            # LayerNorm(128),
             nn.LeakyReLU(inplace=True),
         )
 
@@ -321,12 +339,14 @@ class CloudGenerator(nn.Module):
             nn.Tanh(),
         )
 
-        self.synthetic_block = StyleLINKX(POINTS, 128, 128, 128, 128, 2)
+        self.synthetic_block1 = SyntheticBlock(128)
+        # self.synthetic_block2 = SyntheticBlock(128)
 
     def forward(self, pos, edge_index, batch, style):
         x = self.encoder(pos)
 
-        x = self.synthetic_block(x, edge_index, style)
+        x = self.synthetic_block1(x, pos, edge_index, style)
+        # x = self.synthetic_block2(x, pos, edge_index, style)
 
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
@@ -374,8 +394,9 @@ class ImageGenerator(nn.Module):
         )
 
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))
-        self.register_buffer("sphere", self._fibonacci_sphere(self.num_ws, 0.3))
-
+        self.register_buffer("sphere", self._fibonacci_sphere(self.num_ws))
+        self.register_buffer("dist", torch.cdist(self.sphere, self.sphere))
+                             
     @staticmethod
     def _fibonacci_sphere(samples=1000, scale=1.0):
         phi = torch.pi * (3.0 - torch.sqrt(torch.tensor(5.0)))
@@ -406,9 +427,10 @@ class ImageGenerator(nn.Module):
         images = []
         for camera, z in zip(cameras, ws):
             style = torch.cat([z, pos], dim=-1)
-            style = self.style(style)
+            style =  self.style(style)
 
             point_cloud, points_features = self.point_encoder(pos, edge_index, batch, style)
+            edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
             gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, style)
 
             gaussian_model = self.decoder(gaussian, point_cloud)

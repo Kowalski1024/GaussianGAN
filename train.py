@@ -190,10 +190,10 @@ def main(**kwargs):
     # Initialize config.
     opts = dnnlib.EasyDict(kwargs) # Command line arguments.
     c = dnnlib.EasyDict() # Main config dict.
-    c.G_kwargs = dnnlib.EasyDict(class_name=None, z_dim=512, w_dim=128, mapping_kwargs=dnnlib.EasyDict())
+    c.G_kwargs = dnnlib.EasyDict(class_name=None, z_dim=128, w_dim=128, mapping_kwargs=dnnlib.EasyDict())
     c.D_kwargs = dnnlib.EasyDict(class_name='training.networks_stylegan2.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
-    c.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0,0.99], eps=1e-8)
-    c.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0,0.99], eps=1e-8)
+    c.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0.0,0.99], eps=1e-8)
+    c.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.AdamW', betas=[0.0,0.99], eps=1e-8)
     c.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss')
     c.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, prefetch_factor=2)
 
@@ -247,8 +247,8 @@ def main(**kwargs):
         c.loss_kwargs.pl_no_weight_grad = True # Speed up path length regularization by skipping gradient computation wrt. conv2d weights.
         c.G_kwargs.attention = False
         c.G_kwargs.blocks = 3
-        c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
-        c.loss_kwargs.blur_fade_kimg = c.batch_size * 50 / 32 # Fade out the blur during the first N kimg.
+        # c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
+        # c.loss_kwargs.blur_fade_kimg = c.batch_size * 4 # Fade out the blur during the first N kimg.
     else:
         c.G_kwargs.class_name = 'training.networks_stylegan3.Generator'
         c.G_kwargs.magnitude_ema_beta = 0.5 ** (c.batch_size / (20 * 1e3))

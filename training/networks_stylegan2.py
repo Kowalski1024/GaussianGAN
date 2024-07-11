@@ -961,6 +961,7 @@ class Discriminator(torch.nn.Module):
         epilogue_kwargs     = {},       # Arguments for DiscriminatorEpilogue.
     ):
         super().__init__()
+
         self.c_dim = c_dim
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
