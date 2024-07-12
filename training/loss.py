@@ -41,19 +41,8 @@ class StyleGAN2Loss(Loss):
         self.blur_fade_kimg     = blur_fade_kimg
         self.scheluder = None
 
-    def run_G(self, z, c, update_emas=False):
-        images = []
-        for z_, c_ in zip(z, c):
-            z_ = z_.unsqueeze(0).repeat(self.synthesis.sphere.size(0), 1)
-            z_ = torch.cat([z_, self.synthesis.sphere], dim=-1)
-            ws = self.G.mapping(z_, None, update_emas=update_emas)
-            img = self.synthesis(ws, c_, update_emas=update_emas)
-            images.append(img)
-
-        return torch.stack(images, dim=0).contiguous(), None
-
-
-        
+    def run_G(self, zs, cs, update_emas=False):
+        ws = self.G.mapping(z, torch.zeros([], device=c.device), update_emas=update_emas)
         distances = self.G.synthesis.dist
         points = ws.shape[1]
 
@@ -65,7 +54,7 @@ class StyleGAN2Loss(Loss):
         #         cutoff = int(max(random.random(), 0.1) * points)
         #         ws[i, idx[:cutoff]] = new_ws[i]
 
-        img = self.G.synthesis(ws, c_, update_emas=update_emas)
+        img = self.G.synthesis(ws, c, update_emas=update_emas)
         return img, ws
 
     def run_D(self, img, c, blur_sigma=0, update_emas=False):

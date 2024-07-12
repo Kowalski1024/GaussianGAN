@@ -397,6 +397,20 @@ class ImageGenerator(nn.Module):
         self.num_ws = POINTS
         self.z_dim = z_dim
 
+        self.style = nn.Sequential(
+            nn.Linear(z_dim + 3, z_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(z_dim, z_dim),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.style2 = nn.Sequential(
+            nn.Linear(z_dim, z_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(z_dim, z_dim),
+            nn.LeakyReLU(inplace=True),
+        )
+
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))
         self.register_buffer("sphere", self._fibonacci_sphere(self.num_ws))
         self.register_buffer("dist", torch.cdist(self.sphere, self.sphere))
@@ -418,23 +432,30 @@ class ImageGenerator(nn.Module):
 
         return points * scale
 
-    def forward(self, ws: torch.Tensor, c: torch.Tensor=None, *args, **kwargs):
+    def forward(self, ws, camera=None, *args, **kwargs):
         with torch.no_grad():
-            c = c.unsqueeze(0)
-            poses = c[:, :16].view(-1, 4, 4)
-            intrinsics = c[:, 16:25].view(-1, 3, 3) * 512
-            camera = extract_cameras(poses, intrinsics)[0]
+            poses = camera[:, :16].view(-1, 4, 4)
+            intrinsics = camera[:, 16:25].view(-1, 3, 3) * 512
+            cameras = extract_cameras(poses, intrinsics)
 
             sphere = Data(pos=self.sphere)
             pos, batch = sphere.pos, sphere.batch
-            edge_index = knn_graph(sphere.pos, k=6, batch=sphere.batch)
-        print(ws.shape)
-        point_cloud, points_features = self.point_encoder(pos, edge_index, batch, ws)
-        edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
-        gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, ws)
+            edge_index = knn_graph(sphere.pos, k=8, batch=sphere.batch)
 
-        gaussian_model = self.decoder(gaussian, point_cloud)
-        return render(camera, gaussian_model, self.background, use_rgb=True)
+        images = []
+        for camera, z in zip(cameras, ws):
+            style = torch.cat([z, pos], dim=-1)
+            style =  self.style(style)
+
+            point_cloud, points_features = self.point_encoder(pos, edge_index, batch, style)
+            edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
+            gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, style)
+
+            gaussian_model = self.decoder(gaussian, point_cloud)
+            image = render(camera, gaussian_model, self.background, use_rgb=True)
+            images.append(image)
+
+        return torch.stack(images, dim=0).contiguous()
 
 
 class Generator(nn.Module):
@@ -447,17 +468,16 @@ class Generator(nn.Module):
         self.img_channels = img_channels
         self.synthesis = ImageGenerator(z_dim=w_dim, **kwargs)
         self.num_ws = self.synthesis.num_ws
-        self.mapping = stylegan2.MappingNetwork(z_dim=self.z_dim + 3, c_dim=self.c_dim, w_dim=self.w_dim, num_ws=None, **mapping_kwargs)
+        self.mapping = stylegan2.MappingNetwork(z_dim=self.z_dim, c_dim=self.c_dim, w_dim=self.w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
 
-    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
-        images = []
-        for z_, c_ in zip(z, c):
-            z_ = z_.unsqueeze(0).repeat(POINTS, 1)
-            z_ = torch.cat([z_, self.synthesis.sphere], dim=-1)
-            ws = self.mapping(z_, None, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
-            img = self.synthesis(ws, c_)
-            images.append(img)
+    def forward(self, zs, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
+        with torch.no_grad():
+            poses = c[:, :16].view(-1, 4, 4)
+            intrinsics = c[:, 16:25].view(-1, 3, 3) * 512
+            cameras = extract_cameras(poses, intrinsics)
 
-        return torch.stack(images, dim=0).contiguous()
+        for z, camera in zip(zs, cameras):
+            ws = self.mapping(z, torch.tensor(0.0), truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+            return self.synthesis(ws, camera)
 
