@@ -44,10 +44,11 @@ class StyleGAN2Loss(Loss):
     def run_G(self, z, c, update_emas=False):
         images = []
         for z_, c_ in zip(z, c):
-            z_ = z_.unsqueeze(0).repeat(self.synthesis.sphere.size(0), 1)
-            z_ = torch.cat([z_, self.synthesis.sphere], dim=-1)
+            z_ = z_.unsqueeze(0).repeat(self.G.synthesis.sphere.size(0), 1)
+            z_ = torch.cat([z_, self.G.synthesis.sphere], dim=-1)
             ws = self.G.mapping(z_, None, update_emas=update_emas)
-            img = self.synthesis(ws, c_, update_emas=update_emas)
+            ws = ws.squeeze(1)
+            img = self.G.synthesis(ws, c_, update_emas=update_emas)
             images.append(img)
 
         return torch.stack(images, dim=0).contiguous(), None

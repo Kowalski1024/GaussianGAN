@@ -25,7 +25,7 @@ import numpy as np
 
 
 
-POINTS = 8192
+POINTS = 2048
 
 def modulated_linear(
     x,  # Input tensor of shape [batch_size, in_features].
@@ -428,7 +428,7 @@ class ImageGenerator(nn.Module):
             sphere = Data(pos=self.sphere)
             pos, batch = sphere.pos, sphere.batch
             edge_index = knn_graph(sphere.pos, k=6, batch=sphere.batch)
-        print(ws.shape)
+
         point_cloud, points_features = self.point_encoder(pos, edge_index, batch, ws)
         edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
         gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, ws)
@@ -447,7 +447,7 @@ class Generator(nn.Module):
         self.img_channels = img_channels
         self.synthesis = ImageGenerator(z_dim=w_dim, **kwargs)
         self.num_ws = self.synthesis.num_ws
-        self.mapping = stylegan2.MappingNetwork(z_dim=self.z_dim + 3, c_dim=self.c_dim, w_dim=self.w_dim, num_ws=None, **mapping_kwargs)
+        self.mapping = stylegan2.MappingNetwork(z_dim=self.z_dim + 3, c_dim=self.c_dim, w_dim=self.w_dim, num_ws=1, **mapping_kwargs)
 
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
@@ -456,6 +456,7 @@ class Generator(nn.Module):
             z_ = z_.unsqueeze(0).repeat(POINTS, 1)
             z_ = torch.cat([z_, self.synthesis.sphere], dim=-1)
             ws = self.mapping(z_, None, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+            ws = ws.squeeze(1)
             img = self.synthesis(ws, c_)
             images.append(img)
 
