@@ -41,8 +41,8 @@ class StyleGAN2Loss(Loss):
         self.blur_fade_kimg     = blur_fade_kimg
         self.scheluder = None
 
-    def run_G(self, zs, cs, update_emas=False):
-        ws = self.G.mapping(z, torch.zeros([], device=c.device), update_emas=update_emas)
+    def run_G(self, z, c, update_emas=False):
+        ws = self.G.mapping(z, None, update_emas=update_emas)
         distances = self.G.synthesis.dist
         points = ws.shape[1]
 

@@ -25,7 +25,7 @@ import numpy as np
 
 
 
-POINTS = 8192
+POINTS = 2048
 
 def modulated_linear(
     x,  # Input tensor of shape [batch_size, in_features].
@@ -375,14 +375,14 @@ class GaussiansGenerator(nn.Module):
 
     def forward(self, x, pos, edge_index, batch, style):
         x = self.synthetic_block1(x, edge_index, style)
-        # x = self.synthetic_block2(x, edge_index, style)
+        x = self.synthetic_block2(x, edge_index, style)
 
-        # h = global_mean_pool(x, batch)
-        # h = self.global_conv(h)
-        # h = h.repeat(x.size(0), 1)
-        # x = torch.cat([x, h], dim=-1)
+        h = global_mean_pool(x, batch)
+        h = self.global_conv(h)
+        h = h.repeat(x.size(0), 1)
+        x = torch.cat([x, h], dim=-1)
 
-        # x = self.synthetic_block3(x, edge_index, style)
+        x = self.synthetic_block3(x, edge_index, style)
 
         return x
 
@@ -471,13 +471,7 @@ class Generator(nn.Module):
         self.mapping = stylegan2.MappingNetwork(z_dim=self.z_dim, c_dim=self.c_dim, w_dim=self.w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
 
-    def forward(self, zs, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
-        with torch.no_grad():
-            poses = c[:, :16].view(-1, 4, 4)
-            intrinsics = c[:, 16:25].view(-1, 3, 3) * 512
-            cameras = extract_cameras(poses, intrinsics)
-
-        for z, camera in zip(zs, cameras):
-            ws = self.mapping(z, torch.tensor(0.0), truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
-            return self.synthesis(ws, camera)
+    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, update_emas=False, **synthesis_kwargs):
+        ws = self.mapping(z, None, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, update_emas=update_emas)
+        return self.synthesis(ws, c, update_emas=update_emas)
 

@@ -39,7 +39,7 @@ class GaussianDecoder(nn.Module):
         self.decoders = torch.nn.ModuleList()
 
         for key, channels in self.feature_channels.items():
-            layer = nn.Linear(256, channels)
+            layer = nn.Linear(512, channels)
 
             if key == "scaling":
                 torch.nn.init.constant_(layer.bias, -5.0)
