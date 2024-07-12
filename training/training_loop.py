@@ -129,7 +129,7 @@ def training_loop(
     wandb_mode = None,
     note=None,
 ):
-    image_snapshot_ticks = 1
+    image_snapshot_ticks = 4
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)

@@ -108,16 +108,6 @@ class StyleGAN2Loss(Loss):
 
         # Dmain: Minimize logits for generated images.
         loss_Dgen = 0
-        if phase in ['Dmain', 'Dboth']:
-            with torch.autograd.profiler.record_function('Dgen_forward'):
-                gen_img, _gen_ws = self.run_G(gen_z, gen_c, update_emas=True)
-                gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma, update_emas=True)
-                training_stats.report('Loss/scores/fake', gen_logits)
-                training_stats.report('Loss/signs/fake', gen_logits.sign())
-                loss_Dgen = torch.nn.functional.softplus(gen_logits) # -log(1 - sigmoid(gen_logits))
-            with torch.autograd.profiler.record_function('Dgen_backward'):
-                loss_Dgen.mean().mul(gain).backward()
-
         # Dmain: Maximize logits for real images.
         # Dr1: Apply R1 regularization.
         if phase in ['Dmain', 'Dreg', 'Dboth']:
@@ -130,11 +120,19 @@ class StyleGAN2Loss(Loss):
 
                 loss_Dreal = 0
                 if phase in ['Dmain', 'Dboth']:
+                    gen_img, _gen_ws = self.run_G(gen_z, gen_c, update_emas=True)
+                    gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma, update_emas=True)
+                    training_stats.report('Loss/scores/fake', gen_logits)
+                    training_stats.report('Loss/signs/fake', gen_logits.sign())
+                    loss_Dgen = torch.nn.functional.softplus(gen_logits) # -log(1 - sigmoid(gen_logits))
+
                     loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
-                    # lr_mult = self.scheluder.step((loss_Dgen + loss_Dreal).mean().item())
                     training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
-                    # training_stats.report('Loss/D/lr_mult', lr_mult)
-                    # training_stats.report('Loss/D/smooth_loss', self.scheluder.smoothed_disc_loss)
+
+                    lr_mult = self.scheluder.step((loss_Dgen + loss_Dreal).mean().item())
+                    training_stats.report('Loss/D/lr_mult', lr_mult)
+                    training_stats.report('Loss/D/smooth_loss', self.scheluder.smoothed_disc_loss)
+                    gain *= lr_mult
 
                 loss_Dr1 = 0
                 if phase in ['Dreg', 'Dboth']:
@@ -144,6 +142,9 @@ class StyleGAN2Loss(Loss):
                     loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
                     training_stats.report('Loss/r1_penalty', r1_penalty)
                     training_stats.report('Loss/D/reg', loss_Dr1)
+
+            if phase in ['Dmain', 'Dboth']:
+                loss_Dgen.mean().mul(gain).backward()
 
             with torch.autograd.profiler.record_function(name + '_backward'):
                 (loss_Dreal + loss_Dr1).mean().mul(gain).backward()

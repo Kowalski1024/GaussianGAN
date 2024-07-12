@@ -247,8 +247,8 @@ def main(**kwargs):
         c.loss_kwargs.pl_no_weight_grad = True # Speed up path length regularization by skipping gradient computation wrt. conv2d weights.
         c.G_kwargs.attention = False
         c.G_kwargs.blocks = 3
-        # c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
-        # c.loss_kwargs.blur_fade_kimg = c.batch_size * 4 # Fade out the blur during the first N kimg.
+        c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
+        c.loss_kwargs.blur_fade_kimg = c.batch_size * 2 # Fade out the blur during the first N kimg.
     else:
         c.G_kwargs.class_name = 'training.networks_stylegan3.Generator'
         c.G_kwargs.magnitude_ema_beta = 0.5 ** (c.batch_size / (20 * 1e3))

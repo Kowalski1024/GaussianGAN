@@ -48,8 +48,8 @@ class GapAwareLRScheduler:
         else:
             s_x = h_x
 
-        for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
-            param_group["lr"] = lr * s_x
+        # for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
+        #     param_group["lr"] = lr * s_x
 
         return s_x
 
