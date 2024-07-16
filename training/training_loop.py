@@ -117,8 +117,8 @@ def training_loop(
     ada_kimg                = 500,      # ADA adjustment speed, measured in how many kimg it takes for p to increase/decrease by one unit.
     total_kimg              = 25000,    # Total length of the training, measured in thousands of real images.
     kimg_per_tick           = 4,        # Progress snapshot interval.
-    image_snapshot_ticks    = 50,       # How often to save image snapshots? None = disable.
-    network_snapshot_ticks  = 50,       # How often to save network snapshots? None = disable.
+    image_snapshot_ticks    = 25,       # How often to save image snapshots? None = disable.
+    network_snapshot_ticks  = 500,       # How often to save network snapshots? None = disable.
     resume_pkl              = None,     # Network pickle to resume training from.
     resume_kimg             = 0,        # First kimg to report when resuming training.
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
@@ -129,7 +129,8 @@ def training_loop(
     wandb_mode = None,
     note=None,
 ):
-    image_snapshot_ticks = 4
+    network_snapshot_ticks = 100
+    image_snapshot_ticks = 25
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
@@ -225,7 +226,7 @@ def training_loop(
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
         if name == 'D':
             log4 = np.log(4)
-            scheluder = GapAwareLRScheduler(opt, ideal_loss=log4, x_min=0.1*log4, x_max=0.1*log4, h_min=0.01)
+            scheluder = GapAwareLRScheduler(opt, ideal_loss=log4, x_min=0.1*log4, x_max=0.1*log4, h_min=0.1)
     for phase in phases:
         phase.start_event = None
         phase.end_event = None
@@ -244,6 +245,7 @@ def training_loop(
     if rank == 0:
         print('Exporting sample images...')
         grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set)
+        print(labels.shape, images.shape, grid_size)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
@@ -385,32 +387,33 @@ def training_loop(
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
-        # if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0) and cur_tick:
-        #     snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
-        #     for key, value in snapshot_data.items():
-        #         if isinstance(value, torch.nn.Module):
-        #             value = copy.deepcopy(value).eval().requires_grad_(False)
-        #             if num_gpus > 1:
-        #                 misc.check_ddp_consistency(value, ignore_regex=r'.*\.[^.]+_(avg|ema)')
-        #                 for param in misc.params_and_buffers(value):
-        #                     torch.distributed.broadcast(param, src=0)
-        #             snapshot_data[key] = value.cpu()
-        #         del value # conserve memory
-        #     snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
-        #     if rank == 0:
-        #         with open(snapshot_pkl, 'wb') as f:
-        #             pickle.dump(snapshot_data, f)
+        if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0) and cur_tick:
+            print("network snapshot")
+            snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
+            for key, value in snapshot_data.items():
+                if isinstance(value, torch.nn.Module):
+                    value = copy.deepcopy(value).eval().requires_grad_(False)
+                    if num_gpus > 1:
+                        misc.check_ddp_consistency(value, ignore_regex=r'.*\.[^.]+_(avg|ema)')
+                        for param in misc.params_and_buffers(value):
+                            torch.distributed.broadcast(param, src=0)
+                    snapshot_data[key] = value.cpu()
+                del value # conserve memory
+            snapshot_pkl = os.path.join(run_dir, f'network-snapshot.pkl')
+            if rank == 0:
+                with open(snapshot_pkl, 'wb') as f:
+                    pickle.dump(snapshot_data, f)
 
         # Evaluate metrics.
-        # if (snapshot_data is not None) and (len(metrics) > 0):
-        #     if rank == 0:
-        #         print('Evaluating metrics...')
-        #     for metric in metrics:
-        #         result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-        #             dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
-        #         if rank == 0:
-        #             metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
-        #         stats_metrics.update(result_dict.results)
+        if (snapshot_data is not None) and (len(metrics) > 0):
+            if rank == 0:
+                print('Evaluating metrics...')
+            for metric in metrics:
+                result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
+                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
+                if rank == 0:
+                    metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
+                stats_metrics.update(result_dict.results)
         del snapshot_data # conserve memory
 
         # Collect statistics.

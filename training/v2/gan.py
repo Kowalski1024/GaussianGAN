@@ -25,7 +25,7 @@ import numpy as np
 
 
 
-POINTS = 2048
+POINTS = 8192
 
 def modulated_linear(
     x,  # Input tensor of shape [batch_size, in_features].
@@ -111,9 +111,10 @@ class StyleLinearLayer(nn.Module):
             noise = noise * self.noise_strength
             x.add_(noise)
 
+        x = self.activation(x)
         x = self.adain(x, w)
 
-        return self.activation(x)
+        return x
 
     
 # class StyleLinearLayer(nn.Module):
@@ -290,12 +291,12 @@ class GNNConv(nn.Module):
 
 
 class SyntheticBlock(nn.Module):
-    def __init__(self, channels, styles):
+    def __init__(self, in_channels, out_channels, styles):
         super().__init__()
         self.add_noise = True
 
-        self.gnn_conv = GNNConv(channels)
-        self.adaptive_norm = AdaptivePointNorm(channels, styles)
+        self.gnn_conv = GNNConv(in_channels)
+        self.adaptive_norm = AdaptivePointNorm(in_channels, styles)
         self.leaky_relu = nn.LeakyReLU(inplace=True)
 
         if self.add_noise:
@@ -308,8 +309,8 @@ class SyntheticBlock(nn.Module):
             noise = torch.randn_like(h) * self.noise_strength
             h = h + noise
 
-        h = self.adaptive_norm(h, style)
         h = self.leaky_relu(h)
+        h = self.adaptive_norm(h, style)
         return h
 
 
@@ -322,38 +323,44 @@ class CloudGenerator(nn.Module):
         self.encoder = rff.layers.GaussianEncoding(
             sigma=10.0, input_size=3, encoded_size=channels // 2
         )
+        # self.layer_norm = nn.LayerNorm(channels)
 
         self.global_conv = nn.Sequential(
-            nn.Linear(128, 128),
+            nn.Linear(channels, channels),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(128, 128),
+            nn.Linear(channels, channels),
             nn.LeakyReLU(inplace=True),
         )
 
         self.tail = nn.Sequential(
-            nn.Linear(256, 128),
+            nn.Linear(channels * 2, channels),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(128, 64),
+            nn.Linear(channels, channels // 2),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(64, 3),
+            nn.Linear(channels // 2, 3),
             nn.Tanh(),
         )
 
-        self.synthetic_block1 = SyntheticBlock(128, z_dim)
-        self.synthetic_block2 = SyntheticBlock(128, z_dim)
+        self.synthetic_block1 = SyntheticBlock(128, 128, z_dim)
+        # self.linear1 = StyleLinearLayer(128, z_dim, 128, noise=True)
+        self.synthetic_block2 = SyntheticBlock(128, 128, z_dim)
+        # self.linear2 = StyleLinearLayer(128, z_dim, 128, noise=True)
 
     def forward(self, pos, edge_index, batch, style):
         x = self.encoder(pos)
+        # x = self.layer_norm(x)
 
         x = self.synthetic_block1(x, pos, edge_index, style)
+        # x = self.linear1(x, style)
         x = self.synthetic_block2(x, pos, edge_index, style)
+        # x = self.linear2(x, style)
 
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
         h = h.repeat(x.size(0), 1)
 
         x = torch.cat([x, h], dim=-1)
-        return self.tail(x) * 0.75, x
+        return self.tail(x), x
 
 
 class GaussiansGenerator(nn.Module):
@@ -361,30 +368,38 @@ class GaussiansGenerator(nn.Module):
         super().__init__()
         self.z_dim = z_dim
 
-        self.global_conv = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.LeakyReLU(inplace=True),
-        )
+        # self.global_conv = nn.Sequential(
+        #     nn.Linear(256, 256),
+        #     nn.LeakyReLU(inplace=True),
+        #     nn.Linear(256, 256),
+        #     nn.LeakyReLU(inplace=True),
+        # )
+
+        # self.block1 = SyntheticBlock(256, 256, z_dim)
+        # self.block2 = SyntheticBlock(256, 512, z_dim)
+        # self.block3 = SyntheticBlock(512, 512, z_dim)
 
         self.synthetic_block1 = StyleLINKX(POINTS, z_dim, 256, 256, 256, 2)
-        self.synthetic_block2 = StyleLINKX(POINTS, z_dim, 256, 256, 512, 2)
+        # self.synthetic_block2 = StyleLINKX(POINTS, z_dim, 256, 256, 256, 2)
 
-        self.synthetic_block3 = StyleLINKX(POINTS, z_dim, 1024, 512, 512, 2)
+        # self.synthetic_block3 = StyleLINKX(POINTS, z_dim, 1024, 512, 512, 2)
 
     def forward(self, x, pos, edge_index, batch, style):
+        # x = self.block1(x, pos, edge_index, style)
+        # x = self.block2(x, pos, edge_index, style)
+        # x = self.block3(x, pos, edge_index, style)
+        x_ = x
         x = self.synthetic_block1(x, edge_index, style)
-        x = self.synthetic_block2(x, edge_index, style)
+        # x = self.synthetic_block2(x, edge_index, style)
 
-        h = global_mean_pool(x, batch)
-        h = self.global_conv(h)
-        h = h.repeat(x.size(0), 1)
-        x = torch.cat([x, h], dim=-1)
+        # h = global_mean_pool(x, batch)
+        # h = self.global_conv(h)
+        # h = h.repeat(x.size(0), 1)
+        # x = torch.cat([x, h], dim=-1)
 
-        x = self.synthetic_block3(x, edge_index, style)
+        # x = self.synthetic_block3(x, edge_index, style)
 
-        return x
+        return torch.cat([x, x_], dim=-1)
 
 
 class ImageGenerator(nn.Module):
@@ -405,7 +420,7 @@ class ImageGenerator(nn.Module):
         )
 
         self.style2 = nn.Sequential(
-            nn.Linear(z_dim, z_dim),
+            nn.Linear(z_dim + 3, z_dim),
             nn.LeakyReLU(inplace=True),
             nn.Linear(z_dim, z_dim),
             nn.LeakyReLU(inplace=True),
@@ -440,7 +455,7 @@ class ImageGenerator(nn.Module):
 
             sphere = Data(pos=self.sphere)
             pos, batch = sphere.pos, sphere.batch
-            edge_index = knn_graph(sphere.pos, k=8, batch=sphere.batch)
+            edge_index = knn_graph(sphere.pos, k=6, batch=sphere.batch)
 
         images = []
         for camera, z in zip(cameras, ws):
@@ -448,8 +463,11 @@ class ImageGenerator(nn.Module):
             style =  self.style(style)
 
             point_cloud, points_features = self.point_encoder(pos, edge_index, batch, style)
-            edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
-            gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, style)
+            new_edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
+
+            style = torch.cat([z, point_cloud], dim=-1)
+            style =  self.style2(style)
+            gaussian = self.gaussians(points_features, point_cloud, new_edge_index, batch, style)
 
             gaussian_model = self.decoder(gaussian, point_cloud)
             image = render(camera, gaussian_model, self.background, use_rgb=True)
