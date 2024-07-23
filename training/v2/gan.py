@@ -7,21 +7,18 @@ from training import networks_stylegan2 as stylegan2
 from torch_geometric.nn import knn_graph, PointGNNConv, global_max_pool, InstanceNorm, MessagePassing, global_mean_pool
 import rff
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch_geometric.data import Data
-
+import math
 from torch import Tensor
 from torch.nn import BatchNorm1d
 from torch_geometric.nn.models import MLP
-from torch_geometric.nn.models.linkx import SparseLinear
 from torch_geometric.typing import Adj, OptTensor
 from torch_geometric import nn as gnn
 from torch_geometric.nn.inits import reset
-from torch_geometric.typing import Adj
-from torch import Tensor
 from itertools import pairwise
+from torch_geometric.nn.inits import kaiming_uniform, uniform
+from torch_geometric.utils import spmm
+from torch_geometric.nn.models.linkx import SparseLinear
 
 
 
@@ -128,6 +125,65 @@ class EdgeConv(MessagePassing):
         for layer in self.mlp:
             edge_feat = layer(edge_feat, w)
         return edge_feat
+
+
+# class SparseLinear(MessagePassing):
+#     def __init__(self, in_channels: int, out_channels: int, features_channels: int, bias: bool = True):
+#         super().__init__(aggr='add')
+#         self.in_channels = in_channels
+#         self.out_channels = out_channels
+#         self.features_channels = features_channels
+
+#         self.mlp = nn.Sequential(
+#             nn.Linear(features_channels, features_channels // 2),
+#             nn.LeakyReLU(),
+#             nn.Linear(features_channels // 2, 3),
+#             nn.Tanh()
+#         )
+
+#         self.weight = nn.Parameter(torch.empty(in_channels, out_channels))
+#         if bias:
+#             self.bias = nn.Parameter(torch.empty(out_channels))
+#         else:
+#             self.register_parameter('bias', None)
+
+#         self.reset_parameters()
+
+#     def reset_parameters(self):
+#         kaiming_uniform(self.weight, fan=self.in_channels, a=math.sqrt(5))
+#         if self.bias is not None:
+#             uniform(self.in_channels, self.bias)
+
+#     def forward(
+#         self,
+#         x: Tensor,
+#         pos: Tensor,
+#         edge_index: Adj,
+#     ) -> Tensor:
+#         # Compute the relative positions for edge features
+#         row, col = edge_index
+#         delta = self.mlp(x[col])
+#         relative_pos = pos[row] - pos[col] + delta
+
+#         # Use the relative position as edge weight
+#         edge_weight = torch.norm(relative_pos, p=2, dim=1)  # Compute the L2 norm
+
+#         # propagate_type: (weight: Tensor, edge_weight: OptTensor)
+#         out = self.propagate(edge_index, weight=self.weight, edge_weight=edge_weight)
+
+#         if self.bias is not None:
+#             out = out + self.bias
+
+#         return out
+
+#     def message(self, weight_j: Tensor, edge_weight: OptTensor) -> Tensor:
+#         if edge_weight is None:
+#             return weight_j
+#         else:
+#             return edge_weight.view(-1, 1) * weight_j
+
+#     def message_and_aggregate(self, adj_t: Adj, weight: Tensor) -> Tensor:
+#         return spmm(adj_t, weight, reduce=self.aggr)
     
 
 class LINKX(torch.nn.Module):
@@ -256,7 +312,7 @@ class PointGNNConv(gnn.MessagePassing):
 
         self.mlp_g = nn.ModuleList(
             [
-                SynthesisLayer(channels, channels, z_dim),
+                SynthesisLayer(channels + 3, channels, z_dim),
                 SynthesisLayer(channels, channels, z_dim),
             ]
         )
@@ -270,16 +326,17 @@ class PointGNNConv(gnn.MessagePassing):
         reset(self.mlp_g)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
-        # propagate_type: (x: Tensor, pos: Tensor)
-        out = self.propagate(edge_index, x=x, pos=pos)
+        delta = self.mlp_h(x)
+        out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
         for i, layer in enumerate(self.mlp_g):
             out = layer(out, w[i])
         return x + out
 
-    def message(self, pos_j: Tensor, pos_i: Tensor, x_i: Tensor, x_j: Tensor) -> Tensor:
-        delta = self.mlp_h(x_i)
-        e = torch.cat([pos_j - pos_i + delta, x_j], dim=-1)
-        return self.mlp_f(e)
+    def message(
+        self, pos_j: Tensor, pos_i: Tensor, x_i: Tensor, x_j: Tensor, delta_i: Tensor
+    ) -> Tensor:
+        # Use the passed delta_i directly, no need to calculate it here
+        return torch.cat([pos_j - pos_i + delta_i, x_j], dim=-1)
 
     def __repr__(self) -> str:
         return (
@@ -320,9 +377,10 @@ class CloudGenerator(nn.Module):
 
         self.synthetic_block1 = PointGNNConv(128, z_dim)
         self.synthetic_block2 = PointGNNConv(128, z_dim)
+        self.synthetic_block3 = PointGNNConv(128, z_dim)
 
-        self.synthetic_block3 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
-        self.synthetic_block4 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
+        # self.synthetic_block3 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
+        # self.synthetic_block4 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
 
     def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
@@ -331,6 +389,7 @@ class CloudGenerator(nn.Module):
         # x = self.synthetic_block3(x, edge_index, w=w)
         # x = self.synthetic_block4(x, edge_index, w=w)
         x = self.synthetic_block2(x, pos, edge_index, w[2:])
+        # x = self.synthetic_block3(x, pos, edge_index, w[2:])
         
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
@@ -349,10 +408,10 @@ class GaussiansGenerator(nn.Module):
         self.synthetic_block2 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
         self.synthetic_block3 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
         self.synthetic_block4 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block5 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block6 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block7 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block8 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        # self.synthetic_block5 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        # self.synthetic_block6 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        # self.synthetic_block7 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        # self.synthetic_block8 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
 
 
     def forward(self, x, pos, edge_index, batch, w):
@@ -361,10 +420,10 @@ class GaussiansGenerator(nn.Module):
         x = self.synthetic_block2(x, edge_index, w=w)
         x = self.synthetic_block3(x, edge_index, w=w)
         x = self.synthetic_block4(x, edge_index, w=w)
-        x = self.synthetic_block5(x, edge_index, w=w)
-        x = self.synthetic_block6(x, edge_index, w=w)
-        x = self.synthetic_block7(x, edge_index, w=w)
-        x = self.synthetic_block8(x, edge_index, w=w)
+        # x = self.synthetic_block5(x, edge_index, w=w)
+        # x = self.synthetic_block6(x, pos, edge_index, w=w)
+        # x = self.synthetic_block7(x, pos, edge_index, w=w)
+        # x = self.synthetic_block8(x, pos, edge_index, w=w)
 
         return torch.cat([x, x_], dim=-1)
 
