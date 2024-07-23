@@ -72,9 +72,6 @@ class GaussianDecoder(nn.Module):
                 max_step = 1.2 / 32
                 v = (torch.sigmoid(v) - 0.5) * max_step
                 v = v + pc
-                # if pc is not None:
-                #     v = v + pc
-                # v = torch.tanh(v) * 0.35
             ret[k] = v
 
         return GaussianModel(**ret)

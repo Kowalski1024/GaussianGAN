@@ -43,17 +43,12 @@ class StyleGAN2Loss(Loss):
 
     def run_G(self, z, c, update_emas=False):
         ws = self.G.mapping(z, None, update_emas=update_emas)
-        distances = self.G.synthesis.dist
-        points = ws.shape[1]
 
-        # new_ws = self.G.mapping(torch.randn_like(z, device=ws.device), None, update_emas=False)
-        # for i in range(len(ws)):
-        #     if random.random() < 0.5:
-        #         id = random.randint(0, points - 1)
-        #         idx = torch.argsort(distances[id])[::1]
-        #         cutoff = int(max(random.random(), 0.1) * points)
-        #         ws[i, idx[:cutoff]] = new_ws[i, idx[:cutoff]]
-
+        # if self.style_mixing_prob > 0:
+        #     cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+        #     cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+        #     ws[:, cutoff:] = self.G.mapping(torch.randn_like(z), None, update_emas=False)[:, cutoff:]
+        
         img = self.G.synthesis(ws, c, update_emas=update_emas)
         return img, ws
 
