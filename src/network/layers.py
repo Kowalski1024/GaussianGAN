@@ -1,234 +1,99 @@
+from itertools import pairwise
+
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch import Tensor
 from torch_geometric import nn as gnn
+from torch_geometric.nn.inits import reset
+from torch_geometric.typing import Adj, OptTensor
+
 from src.utils.training import normalize_2nd_moment
 
 
-class MappingNetwork(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, num_layers):
-        super().__init__()
+def fmm_modulate_linear(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    styles: torch.Tensor,
+    noise: OptTensor = None,
+    activation: str = "demod",
+) -> torch.Tensor:
+    points_num, c_in = x.shape
+    c_out, c_in = weight.shape
+    rank = styles.shape[0] // (c_in + c_out)
 
-        self.mapping = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
+    assert styles.shape[0] % (c_in + c_out) == 0
+    assert len(styles.shape) == 1
 
-        for _ in range(num_layers - 2):
-            self.mapping.add_module(
-                f"linear_{_}",
-                nn.Linear(hidden_dim, hidden_dim),
-            )
-            self.mapping.add_module(
-                f"act_{_}",
-                nn.LeakyReLU(0.2, inplace=True),
-            )
+    # Now, we need to construct a [c_out, c_in] matrix
+    left_matrix = styles[: c_out * rank]  # [left_matrix_size]
+    right_matrix = styles[c_out * rank :]  # [right_matrix_size]
 
-        self.mapping.add_module(
-            f"linear_{num_layers - 1}",
-            nn.Linear(hidden_dim, out_dim),
-        )
+    left_matrix = left_matrix.view(c_out, rank)  # [c_out, rank]
+    right_matrix = right_matrix.view(rank, c_in)  # [c_out, rank]
 
-    def forward(self, x):
-        """
-        Args:
-            x: [N, style_dim]
+    # Imagine, that the output of `self.affine` (in SynthesisLayer) is N(0, 1)
+    # Then, std of weights is sqrt(rank). Converting it back to N(0, 1)
+    modulation = left_matrix @ right_matrix / np.sqrt(rank)  # [c_out, c_in]
 
-        Returns:
-            x: [N, style_dim]
-        """
-        x = normalize_2nd_moment(x)
-        return self.mapping(x)
+    if activation == "tanh":
+        modulation = modulation.tanh()
+    elif activation == "sigmoid":
+        modulation = modulation.sigmoid() - 0.5
 
+    W = weight * (modulation + 1.0)  # [c_out, c_in]
+    if activation == "demod":
+        W = W / (W.norm(dim=1, keepdim=True) + 1e-8)  # [c_out, c_in]
+    W = W.to(dtype=x.dtype)
 
-class AdaptivePointNorm(nn.Module):
-    def __init__(self, in_channels, style_dim):
-        super().__init__()
+    x = x.view(points_num, c_in, 1)
+    out = torch.matmul(W, x)  # [num_rays, c_out, 1]
+    out = out.view(points_num, c_out)  # [num_rays, c_out]
 
-        self.norm = gnn.InstanceNorm(in_channels)
-        self.style = nn.Linear(style_dim, in_channels * 2)
+    if noise is not None:
+        out = out.add_(noise)
 
-        self.style.weight.data.normal_()
-        self.style.bias.data.zero_()
-
-        self.style.bias.data[:in_channels] = 1
-        self.style.bias.data[in_channels:] = 0
-
-    def forward(self, x, style):
-        """
-        Args:
-            x: [N, C]
-            style: [N, style_dim]
-
-        Returns:
-            x: [N, C]
-        """
-        style = self.style(style)
-        gamma, beta = style.chunk(2, 1)
-
-        x = self.norm(x)
-        x = (gamma * x).add_(beta)
-
-        return x
+    return out
 
 
-class EdgeConv(gnn.MessagePassing):
-    def __init__(self, in_channels: int, out_channels: int):
-        super().__init__(aggr="add")
-
-        self.mlp = torch.nn.Sequential(
-            nn.Linear(in_channels + 3, out_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(out_channels, out_channels),
-            nn.LeakyReLU(inplace=True),
-        )
-
-    def forward(
-        self,
-        h,
-        pos,
-        edge_index,
-    ):
-        return self.propagate(edge_index, h=h, pos=pos)
-
-    def message(self, h_j, pos_j, pos_i):
-        edge_feat = torch.cat([h_j, pos_j - pos_i], dim=-1)
-        return self.mlp(edge_feat)
-
-
-class PointGNNConv(nn.Module):
-    def __init__(self, in_channels, out_channels, aggr="sum"):
-        super().__init__()
-
-        self.mlp_h = nn.Sequential(
-            nn.Linear(in_channels, in_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(in_channels, 3),
-            nn.Tanh(),
-        )
-
-        self.mlp_f = nn.Sequential(
-            nn.Linear(in_channels + 3, in_channels),
-            nn.LeakyReLU(inplace=True),
-        )
-
-        self.mlp_g = nn.Sequential(
-            nn.Linear(in_channels, out_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(out_channels, out_channels),
-        )
-
-        self.network = gnn.PointGNNConv(self.mlp_h, self.mlp_f, self.mlp_g, aggr=aggr)
-
-    def forward(self, x, pos, edge_index):
-        """
-        Args:
-            x: [N, in_channels]
-            pos: [N, 3]
-            edge_index: [2, E]
-
-        Returns:
-            out: [N, out_channels]
-        """
-        return self.network(x, pos, edge_index)
-
-
-class SyntheticBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, style_channels, use_noise=True):
-        super().__init__()
-        self.add_noise = use_noise
-
-        self.gnn_conv = PointGNNConv(in_channels, out_channels)
-        self.adaptive_norm = AdaptivePointNorm(out_channels, style_channels)
-        self.leaky_relu = nn.LeakyReLU(0.2, inplace=True)
-
-        if self.add_noise:
-            self.noise_strength = torch.nn.Parameter(torch.zeros(1))
-
-    def forward(self, x, pos, edge_index, style):
-        """
-        Args:
-            x: [N, in_channels]
-            pos: [N, 3]
-            edge_index: [2, E]
-            style: [N, style_channels]
-
-        Returns:
-            x: [N, out_channels]
-        """
-        x = self.gnn_conv(x, pos, edge_index)
-
-        if self.add_noise:
-            noise = torch.randn(1, x.size(1), device=x.device) * self.noise_strength
-            x = x.add_(noise)
-
-        x = self.leaky_relu(x)
-        x = self.adaptive_norm(x, style)
-        return x
-
-
-class StyleLinearLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, style_channels, use_noise=True):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.style_channels = style_channels
-        self.use_noise = use_noise
-        self.activation = nn.LeakyReLU(inplace=True)
-
-        self.linear = nn.Linear(in_channels, out_channels)
-        self.adain = AdaptivePointNorm(out_channels, style_channels)
-        self.noise_strength = nn.Parameter(torch.zeros(1)) if use_noise else None
-
-    def forward(self, x, style):
-        """
-        Args:
-            x: [N, in_channels]
-            style: [N, style_channels]
-
-        Returns:
-            x: [N, out_channels]
-        """
-        x = self.linear(x)
-
-        if self.use_noise:
-            noise = torch.randn(1, x.size(1), device=x.device) * self.noise_strength
-            x.add_(noise)
-
-        x = self.adain(x, style)
-
-        return self.activation(x)
-
-
-class StyleMLP(nn.Module):
+class SynthesisLayer(torch.nn.Module):
     def __init__(
         self,
-        channels,
-        style_channels,
-        use_noise=True,
+        in_channels: int,
+        out_channels: int,
+        style_channels: int,
+        use_noise: bool = False,
+        rank: int = 10,
     ):
         super().__init__()
-        self.layers = nn.ModuleList()
-        for in_channels, out_channels in zip(channels[:-1], channels[1:]):
-            self.layers.append(
-                StyleLinearLayer(in_channels, style_channels, out_channels, use_noise)
+        self.affine = nn.Linear(style_channels, (in_channels + out_channels) * rank)
+
+        self.weight = torch.nn.Parameter(
+            torch.randn([out_channels, in_channels]).to(
+                memory_format=torch.contiguous_format
             )
+        )
+        self.bias = torch.nn.Parameter(torch.zeros([1, out_channels]))
 
-    def forward(self, x, style):
-        """
-        Args:
-            x: [N, in_channels]
-            style: [N, style_channels]
+        self.activation = nn.LeakyReLU(inplace=True)
 
-        Returns:
-            x: [N, out_channels]
-        """
-        for layer in self.layers:
-            x = layer(x, style)
+    def forward(self, x, w):
+        styles = self.affine(w).squeeze(0)
+
+        x = fmm_modulate_linear(
+            x=x, weight=self.weight, styles=styles, activation="demod"
+        )
+
+        x = self.activation(x.add_(self.bias))
         return x
 
 
-class StyleLINKX(torch.nn.Module):
+class LINKX(torch.nn.Module):
+    r"""The LINKX model from the `"Large Scale Learning on Non-Homophilous
+    Graphs: New Benchmarks and Strong Simple Methods"
+    <https://arxiv.org/abs/2110.14446>`_ paper.
+    """
+
     def __init__(
         self,
         num_nodes: int,
@@ -236,73 +101,239 @@ class StyleLINKX(torch.nn.Module):
         hidden_channels: int,
         out_channels: int,
         style_channels: int,
-        num_layers: int,
+        synthethic_layers: int,
         num_edge_layers: int = 1,
         num_node_layers: int = 1,
+        use_noise: bool = False,
+        rank: int = 10,
     ):
         super().__init__()
 
         self.num_nodes = num_nodes
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.style_channels = style_channels
         self.num_edge_layers = num_edge_layers
-        self.num_node_layers = num_node_layers
-        self.num_layers = num_layers
+        self.synthethic_layers = synthethic_layers
 
         self.edge_lin = gnn.models.linkx.SparseLinear(num_nodes, hidden_channels)
 
         if self.num_edge_layers > 1:
-            self.edge_norm = gnn.LayerNorm(hidden_channels)
+            self.edge_norm = nn.BatchNorm1d(hidden_channels)
             channels = [hidden_channels] * num_edge_layers
-            self.edge_mlp = gnn.MLP(channels, dropout=0.0, act_first=True)
+            self.edge_mlp = gnn.models.MLP(
+                channels, dropout=0.0, act_first=True, act="leakyrelu"
+            )
         else:
             self.edge_norm = None
             self.edge_mlp = None
 
         channels = [in_channels] + [hidden_channels] * num_node_layers
-        self.node_mlp = StyleMLP(channels, style_channels)
+        self.node_mlp = gnn.models.MLP(
+            channels, dropout=0.0, act_first=True, act="leakyrelu"
+        )
 
         self.cat_lin1 = torch.nn.Linear(hidden_channels, hidden_channels)
         self.cat_lin2 = torch.nn.Linear(hidden_channels, hidden_channels)
 
-        channels = [hidden_channels] * num_layers + [out_channels]
-        self.final_mlp = StyleMLP(channels, style_channels)
-        self.num_ws = num_node_layers + num_layers
+        channels = [hidden_channels] * synthethic_layers + [out_channels]
+        self.final_mlp = nn.ModuleList()
+        for channel_in, channel_out in pairwise(channels):
+            self.final_mlp.append(
+                SynthesisLayer(
+                    channel_in=channel_in,
+                    channel_out=channel_out,
+                    style_channels=style_channels,
+                    use_noise=use_noise,
+                    rank=rank,
+                )
+            )
 
-    def forward(self, x, edge_index, style):
-        """
-        Args:
-            x: [N, in_channels]
-            edge_index: [2, E]
-            style: [N, style_channels]
+        self.leakyrelu = nn.LeakyReLU(inplace=True)
 
-        Returns:
-            x: [N, out_channels]
-        """
+        self.reset_parameters()
 
-        out = self.edge_lin(edge_index, None)
+    def reset_parameters(self):
+        r"""Resets all learnable parameters of the module."""
+        self.edge_lin.reset_parameters()
+        if self.edge_norm is not None:
+            self.edge_norm.reset_parameters()
+        if self.edge_mlp is not None:
+            self.edge_mlp.reset_parameters()
+        self.node_mlp.reset_parameters()
+        self.cat_lin1.reset_parameters()
+        self.cat_lin2.reset_parameters()
+
+    def forward(
+        self,
+        x: OptTensor,
+        pos: OptTensor,
+        edge_index: Adj,
+        edge_weight: OptTensor = None,
+        w=None,
+    ) -> Tensor:
+        """"""  # noqa: D419
+        out = self.edge_lin(edge_index, edge_weight)
 
         if self.edge_norm is not None and self.edge_mlp is not None:
-            out = out.relu_()
+            out = self.leakyrelu(out)
             out = self.edge_norm(out)
             out = self.edge_mlp(out)
 
         out = out + self.cat_lin1(out)
 
         if x is not None:
-            x = self.node_mlp(x, style)
+            x = self.node_mlp(x)
             out = out + x
             out = out + self.cat_lin2(x)
 
-        return self.final_mlp(out.relu_(), style)
+        out = self.leakyrelu(out)
+        for i, layer in enumerate(self.final_mlp):
+            out = layer(out, w[i])
+        return out
 
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}(num_nodes={self.num_nodes}, "
+            f"synthethic_layers={self.synthethic_layers}, "
             f"in_channels={self.in_channels}, "
-            f"out_channels={self.out_channels}, "
-            f"num_layers={self.num_layers}, "
-            f"num_edge_layers={self.num_edge_layers}, "
-            f"num_node_layers={self.num_node_layers})"
+            f"out_channels={self.out_channels})"
         )
+
+
+class PointGNNConv(gnn.MessagePassing):
+    r"""The PointGNN operator from the `"Point-GNN: Graph Neural Network for
+    3D Object Detection in a Point Cloud" <https://arxiv.org/abs/2003.01251>`_
+    paper.
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        style_channels,
+        synthetic_layers=2,
+        use_noise=False,
+        rank: int = 10,
+        **kwargs,
+    ):
+        kwargs.setdefault("aggr", "max")
+        super().__init__(**kwargs)
+
+        self.mlp_h = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 2),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(in_channels // 2, 3),
+            nn.Tanh(),
+        )
+
+        layers = [in_channels + 3] + [in_channels] * synthetic_layers
+        self.mlp_g = nn.ModuleList()
+        for channel_in, channel_out in pairwise(layers):
+            self.mlp_g.append(
+                SynthesisLayer(
+                    channel_in=channel_in,
+                    channel_out=channel_out,
+                    style_channels=style_channels,
+                    use_noise=use_noise,
+                    rank=rank,
+                )
+            )
+
+        if in_channels != out_channels:
+            self.lin = nn.Linear(in_channels, out_channels)
+        else:
+            self.lin = nn.Identity()
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        reset(self.mlp_h)
+        reset(self.mlp_g)
+
+    def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
+        delta = self.mlp_h(x)
+        out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
+
+        for i, layer in enumerate(self.mlp_g):
+            out = layer(out, w[i])
+
+        x = x + out
+
+        return self.lin(x)
+
+    def message(
+        self, pos_j: Tensor, pos_i: Tensor, x_i: Tensor, x_j: Tensor, delta_i: Tensor
+    ) -> Tensor:
+        return torch.cat([pos_j - pos_i + delta_i, x_j], dim=-1)
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  mlp_h={self.mlp_h},\n"
+            f"  mlp_g={self.mlp_g},\n"
+            f"  lin={self.lin}\n"
+            f")"
+        )
+
+
+class MappingNetwork(nn.Module):
+    def __init__(self, channels: int, num_layers: int):
+        super().__init__()
+        self.mapping = nn.Sequential(
+            *[
+                nn.Linear(channels, channels),
+                nn.LeakyReLU(inplace=True),
+            ]
+            * num_layers
+        )
+
+    def forward(self, x):
+        x = normalize_2nd_moment(x)
+        return self.mapping(x)
+
+
+class GlobalPoolingLayer(nn.Module):
+    def __init__(self, type: str, channels: int, layers: int = 2):
+        super().__init__()
+
+        if type == "max":
+            self.pool = gnn.global_max_pool
+        elif type == "mean":
+            self.pool = gnn.global_mean_pool
+        elif type == "sum":
+            self.pool = gnn.global_add_pool
+        else:
+            raise ValueError(f"Unknown pooling method: {type}")
+
+        self.global_layers = nn.Sequential(
+            *[
+                nn.Linear(channels, channels),
+                nn.LeakyReLU(inplace=True),
+            ]
+            * layers
+        )
+
+    def forward(self, x, batch):
+        x = self.pool(x, batch)
+        x = self.global_layers(x)
+        return x
+
+
+class _TruncExp(torch.autograd.Function):  # pylint: disable=abstract-method
+    # Implementation from torch-ngp:
+    # https://github.com/ashawkey/torch-ngp/blob/93b08a0d4ec1cc6e69d85df7f0acdfb99603b628/activation.py
+    @staticmethod
+    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, x):  # pylint: disable=arguments-differ
+        ctx.save_for_backward(x)
+        return torch.exp(x)
+
+    @staticmethod
+    @torch.cuda.amp.custom_bwd
+    def backward(ctx, g):  # pylint: disable=arguments-differ
+        x = ctx.saved_tensors[0]
+        return g * torch.exp(torch.clamp(x, max=15))
+
+
+trunc_exp = _TruncExp.apply

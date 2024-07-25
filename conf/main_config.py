@@ -4,7 +4,6 @@ from typing import Any
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 import conf.optimizers as optimizers
-import conf.losses as losses
 
 
 @dataclass
@@ -16,11 +15,19 @@ class DatasetConfig:
 
 
 @dataclass
+class GANLossConfig:
+    use_stylemix: bool = True
+    blur_sigma: float = 10.0
+    blur_fade_epochs: int = 0
+    r1_gamma: float = 0.3
+
+
+@dataclass
 class GeneratorConfig:
     points: int = 4096
-    z_dim: int = 256
+    noise_dim: int = 256
     knn: int = 6
-    xyz_mult: float = 1.0
+    xyz_mult: float = 0.75
 
     cloud_channels: int = 128
     cloud_layers: int = 1
@@ -61,7 +68,7 @@ class TrainingConfig:
     generator_interval: int = 1
     discriminator_interval: int = 1
     generator_warmup: int = 10
-    loss: losses.LossConfig = field(default_factory=losses.LSGANLossConfig)
+    loss: GANLossConfig = field(default_factory=GANLossConfig)
 
     image_grid_size: tuple[int, int] = (16, 16)
     image_save_interval: int = 1

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from omegaconf import MISSING
+import numpy as np
 
 
 @dataclass
@@ -37,18 +38,9 @@ class ScheduledConfig:
 
 
 @dataclass
-class LSGANSchedulerConfig(ScheduledConfig):
-    ideal_loss: float = 0.5
-    x_min: float = 0.05
-    x_max: float = 0.05
-    h_min: float = 0.1
-    f_max: float = 2.0
-
-
-@dataclass
-class WGANSchedulerConfig(ScheduledConfig):
-    ideal_loss: float = 0.0
-    x_min: float = 0.1
-    x_max: float = 0.1
+class GANSchedulerConfig(ScheduledConfig):
+    ideal_loss: float = np.log(4)
+    x_min: float = 0.1 * np.log(4)
+    x_max: float = 0.1 * np.log(4)
     h_min: float = 0.1
     f_max: float = 2.0

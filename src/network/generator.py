@@ -1,185 +1,254 @@
+from itertools import pairwise
+
+import rff
 import torch
 import torch.nn as nn
-import rff
+from torch import Tensor
+from torch_geometric.data import Batch, Data
+from torch_geometric.typing import Adj
 
-from torch_geometric.nn import global_max_pool, knn_graph, LayerNorm, global_mean_pool
-from torch_geometric.data import Data
+from conf.layers import GlobalPoolingConfig, LINKXConfig, PointGNNConfig
+from conf.models import GeneratorConfig
+from src.network.layers import (
+    LINKX,
+    GlobalPoolingLayer,
+    MappingNetwork,
+    PointGNNConv,
+    trunc_exp,
+)
+from src.utils.camera import Camera
+from src.utils.render import GaussianModel, render
 
-from .layers import SyntheticBlock, StyleLINKX
-from .gaussian_decoder import GaussianDecoder
-from src.utils.render import render
-from src.utils.camera import extract_cameras, generate_cameras
-from conf.main_config import GeneratorConfig
 
-
-class CloudGenerator(nn.Module):
-    def __init__(self, channels=256, style_channels=256, num_layers=2, xyz_mult=1.0):
+class CloudNetwork(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_channels: list[int],
+        out_channels: int,
+        style_channels: int,
+        layers_config: PointGNNConfig,
+        pooling_config: GlobalPoolingConfig,
+    ):
         super().__init__()
-        self.style_channels = style_channels
-        self.xyz_mult = xyz_mult
-
+        self.synthethic_layers = 0
+        self.styles_per_layer = layers_config.synthethic_layers
         self.encoder = rff.layers.GaussianEncoding(
-            sigma=10.0, input_size=3, encoded_size=channels // 2
+            sigma=10.0, input_size=3, encoded_size=in_channels // 2
         )
 
-        self.global_conv = nn.Sequential(
-            nn.Linear(channels, channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(channels, channels),
-            nn.LeakyReLU(inplace=True),
-        )
+        self.global_pooling = GlobalPoolingLayer(**pooling_config, layers=out_channels)
 
-        self.tail = nn.Sequential(
-            nn.Linear(channels * 2, channels),
+        self.position_decoder = nn.Sequential(
+            nn.Linear(out_channels * 2, out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(channels, channels // 2),
+            nn.Linear(out_channels, out_channels // 2),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(channels // 2, 3),
+            nn.Linear(out_channels // 2, 3),
             nn.Tanh(),
         )
 
-        self.synthetic_blocks = nn.ModuleList()
-        for _ in range(num_layers):
-            self.synthetic_blocks.append(
-                SyntheticBlock(channels, channels, style_channels)
+        layers = [in_channels] + hidden_channels + [out_channels]
+        self.graph_layers = nn.ModuleList()
+        for in_c, out_c in pairwise(layers):
+            self.synthethic_layers += layers_config.synthethic_layers
+            self.graph_layers.append(
+                PointGNNConv(
+                    in_channels=in_c,
+                    out_channels=out_c,
+                    style_channels=style_channels,
+                    **layers_config,
+                )
             )
 
-    def forward(self, pos, edge_index, batch, style):
-        """
-        Args:
-            pos: [N, 3]
-            edge_index: [2, E]
-            batch: [N]
-            style: [N, z_channels]
-
-        Returns:
-            pos: [N, 3]
-            x: [N, channels]
-        """
+    def forward(
+        self, pos: Tensor, edge_index: Adj, batch: Batch, styles: Tensor
+    ) -> tuple[Tensor, Tensor]:
         x = self.encoder(pos)
 
-        for block in self.synthetic_blocks:
-            x = block(x, pos, edge_index, style)
+        fragmented_styles = torch.split(styles, self.styles_per_layer)
+        for graph_block, style in zip(self.graph_layers, fragmented_styles):
+            x = graph_block(x, pos, edge_index, style)
 
-        h = global_max_pool(x, batch)
-        h = self.global_conv(h)
-        h = h.repeat(x.size(0), 1)
-
+        h = self.global_pooling(x, batch)
         x = torch.cat([x, h], dim=-1)
-        return self.tail(x) * self.xyz_mult, x
+
+        return self.position_decoder(x), x
 
 
-class GaussiansGenerator(nn.Module):
+class FeatureNetwork(nn.Module):
     def __init__(
         self,
-        points,
-        in_channels,
-        hidden_channels,
-        out_channels,
-        style_channels,
-        num_layers,
-        **linkx_kwargs,
+        in_channels: int,
+        hidden_channels: list[int],
+        out_channels: int,
+        style_channels: int,
+        num_points: int,
+        layers_config: LINKXConfig,
     ):
         super().__init__()
+        self.synthethic_layers = 0
+        self.styles_per_layer = layers_config.synthethic_layers
 
-        self.synthetic_block = StyleLINKX(
-            num_nodes=points,
-            in_channels=in_channels,
-            hidden_channels=hidden_channels,
-            out_channels=out_channels,
-            style_channels=style_channels,
-            num_layers=num_layers,
-            **linkx_kwargs,
-        )
-        # self.synthetic_block = SyntheticBlock(in_channels, out_channels, style_channels)
+        layers = [in_channels] + hidden_channels + [out_channels]
+        self.graph_layers = nn.ModuleList()
+        for in_c, out_c in pairwise(layers):
+            self.synthethic_layers += layers_config.synthethic_layers
+            self.graph_layers.append(
+                LINKX(
+                    num_nodes=num_points,
+                    in_channels=in_c,
+                    hidden_channels=out_c,
+                    out_channels=out_c,
+                    style_channels=style_channels,
+                    **layers_config,
+                )
+            )
 
-    def forward(self, x, pos, edge_index, batch, style):
-        """
-        Args:
-            x: [N, in_channels]
-            pos: [N, 3]
-            edge_index: [2, E]
-            batch: [N]
-            style: [N, style_channels]
+    def forward(
+        self, x: Tensor, pos: Tensor, edge_index: Adj, batch: Batch, styles: Tensor
+    ) -> Tensor:
+        x_ = x
 
-        Returns:
-            x: [N, out_channels]
-        """
-        return self.synthetic_block(x, edge_index, style)
+        fragmented_styles = torch.split(styles, self.styles_per_layer)
+        for graph_block, style in zip(self.graph_layers, fragmented_styles):
+            x = graph_block(x, pos, edge_index, style)
+
+        return torch.cat([x, x_], dim=-1)
 
 
-class ImageGenerator(nn.Module):
+class GaussianDecoder(nn.Module):
     def __init__(
         self,
-        config: GeneratorConfig,
-        image_resolution: int,
+        in_channels: int,
+        hidden_channels: list[int],
+        max_scale: float = 0.02,
+        shs_degree: int = 3,
+        use_rgb: bool = False,
+        xyz_offset: bool = True,
+        restrict_offset: bool = True,
+    ):
+        super(GaussianDecoder, self).__init__()
+        self.max_scale = max_scale
+        self.use_rgb = use_rgb
+        self.xyz_offset = xyz_offset
+        self.restrict_offset = restrict_offset
+
+        self.feature_channels = {
+            "scaling": 3,
+            "rotation": 4,
+            "opacity": 1,
+            "shs": shs_degree,
+            "xyz": 3,
+        }
+
+        layers = [in_channels] + hidden_channels
+        self.mlp = nn.Sequential()
+        for in_c, out_c in pairwise(layers):
+            self.mlp.add_module("linear", nn.Linear(in_c, out_c))
+            self.mlp.add_module("leaky_relu", nn.LeakyReLU(inplace=True))
+
+        self.decoders = torch.nn.ModuleList()
+        for key, channels in self.feature_channels.items():
+            layer = nn.Linear(in_channels, channels)
+
+            if key == "scaling":
+                torch.nn.init.constant_(layer.bias, -5.0)
+            elif key == "rotation":
+                torch.nn.init.constant_(layer.bias, 0)
+                torch.nn.init.constant_(layer.bias[0], 1.0)
+            elif key == "opacity":
+                torch.nn.init.constant_(layer.bias, -2.2)
+
+            self.decoders.append(layer)
+
+    def forward(self, x: Tensor, point_cloud: Tensor | None = None) -> GaussianModel:
+        v = self.mlp(x)
+
+        ret = {}
+        for k, layer in zip(self.feature_channels.keys(), self.decoders):
+            v = layer(x)
+            if k == "rotation":
+                v = torch.nn.functional.normalize(v)
+            elif k == "scaling":
+                v = trunc_exp(v)
+                v = torch.clamp(v, min=0, max=self.max_scale)
+            elif k == "opacity":
+                v = torch.sigmoid(v)
+            elif k == "shs":
+                v = torch.reshape(v, (v.shape[0], -1, 3))
+            elif k == "xyz":
+                if point_cloud is None:
+                    v = torch.tanh(v)
+                else:
+                    if self.restrict_offset:
+                        v = v * 0.01
+                    v = v + point_cloud if self.xyz_offset else point_cloud
+            ret[k] = v
+
+        return GaussianModel(**ret)
+
+
+class GaussianGenerator(nn.Module):
+    def __init__(self, generator_config: GeneratorConfig):
+        super().__init__()
+        self.config = generator_config
+        noise_channels = self.config.noise_channels
+
+        self.mapping_network = MappingNetwork(
+            channels=noise_channels,
+            num_layers=self.config.mapping_layers,
+        )
+        self.cloud_network = CloudNetwork(
+            style_channels=noise_channels,
+            **self.config.cloud_network,
+        )
+        self.feature_network = FeatureNetwork(
+            style_channels=noise_channels,
+            num_points=self.config.points,
+            **self.config.feature_network,
+        )
+        self.decoder = GaussianDecoder(**self.config.decoder)
+
+        self.synthethic_layers = (
+            self.cloud_network.synthethic_layers
+            + self.feature_network.synthethic_layers
+        )
+
+    def forward(self, noise: Tensor, sphere: Data) -> GaussianModel:
+        pos, edge_index, batch = sphere.pos, sphere.edge_index, sphere.batch
+
+        noise = noise.unsqueeze(0)
+        styles = self.mapping_network(noise)
+        styles = styles.expand(self.synthethic_layers, -1)
+
+        pos, cloud_features = self.cloud_network(pos, edge_index, batch, styles)
+        features = self.feature_network(cloud_features, pos, edge_index, batch, styles)
+        return self.decoder(features, pos)
+
+
+class Generator(nn.Module):
+    def __init__(
+        self,
+        generator_config: GeneratorConfig,
+        image_size: int,
+        background: tuple[int, int, int],
     ):
         super().__init__()
-        self.config = config
-        self.image_resolution = image_resolution
-
-        self.point_encoder = CloudGenerator(
-            channels=config.cloud_channels,
-            num_layers=config.cloud_layers,
-            style_channels=config.z_dim,
-        )
-
-        self.gaussians = GaussiansGenerator(
-            points=config.points,
-            in_channels=config.cloud_channels * 2,
-            hidden_channels=config.gaussian_channels,
-            out_channels=config.gaussian_channels,
-            style_channels=config.z_dim,
-            num_layers=config.gaussian_layers,
-        )
-
-        self.decoder = GaussianDecoder(
-            in_channels=config.gaussian_channels,
-            shs_degree=config.shs_degree,
-            use_rgb=config.use_rgb,
-            xyz_offset=config.xyz_offset,
-            restrict_offset=config.restrict_offset,
-        )
-
-        self.style_head = nn.Sequential(
-            nn.Linear(config.z_dim + 3, config.z_dim),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(config.z_dim, config.z_dim),
-            nn.LeakyReLU(inplace=True),
-        )
+        self.image_size = image_size
+        self.gaussian_generator = GaussianGenerator(generator_config)
 
         self.background: torch.Tensor
-        self.register_buffer("background", torch.ones(3, dtype=torch.float32))
+        self.register_buffer(
+            "background", torch.tensor(background, dtype=torch.float32)
+        )
 
-    def forward(self, zs, sphere, camera=None):
-        with torch.no_grad():
-            if camera is None:
-                cameras = generate_cameras(len(zs), zs.device)
-            else:
-                poses = camera[:, :16].view(-1, 4, 4)
-                fovx = camera[:, 16]
-                fovy = camera[:, 17]
-                cameras = extract_cameras(poses, fovx, fovy, self.image_resolution)
+    def forward(self, noises: Tensor, sphere: Data, cameras: Camera) -> Tensor:
+        images = torch.empty(len(noises), 3, self.image_size, self.image_size)
 
-            sphere = Data(pos=sphere)
-            pos, batch = sphere.pos, sphere.batch
-            edge_index = knn_graph(pos, k=self.config.knn, batch=batch)
+        for i, (noise, camera) in enumerate(zip(noises, cameras)):
+            gaussian_model = self.gaussian_generator(noise, sphere)
+            img = render(gaussian_model, camera, self.background)
+            images[i] = img
 
-        images = []
-        for camera, z in zip(cameras, zs):
-            style = torch.cat([pos, z], dim=-1)
-            style = self.style_head(style)
-
-            point_cloud, points_features = self.point_encoder(
-                pos, edge_index, batch, style
-            )
-            edge_index = knn_graph(point_cloud, k=self.config.knn, batch=batch)
-            gaussian = self.gaussians(
-                points_features, point_cloud, edge_index, batch, style
-            )
-
-            gaussian_model = self.decoder(gaussian, point_cloud)
-            image = render(camera, gaussian_model, self.background, use_rgb=self.config.use_rgb)
-            images.append(image)
-
-        return torch.stack(images, dim=0).contiguous()
+        return images
