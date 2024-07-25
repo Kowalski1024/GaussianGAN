@@ -65,8 +65,8 @@ class GaussianDecoder(nn.Module):
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                if self.use_rgb:
-                    v = torch.sigmoid(v)
+                # if self.use_rgb:
+                #     v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 max_step = 1.2 / 32

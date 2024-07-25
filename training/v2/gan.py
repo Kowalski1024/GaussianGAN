@@ -297,17 +297,10 @@ class PointGNNConv(gnn.MessagePassing):
         super().__init__(**kwargs)
 
         self.mlp_h = nn.Sequential(
-            nn.Linear(channels, channels),
+            nn.Linear(channels, channels // 2),
             nn.LeakyReLU(inplace=True),
-            nn.Linear(channels, 3),
+            nn.Linear(channels // 2, 3),
             nn.Tanh(),
-        )
-
-        self.mlp_f = nn.Sequential(
-            nn.Linear(channels + 3, channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(channels, channels),
-            nn.LeakyReLU(inplace=True),
         )
 
         self.mlp_g = nn.ModuleList(
@@ -322,7 +315,6 @@ class PointGNNConv(gnn.MessagePassing):
     def reset_parameters(self):
         super().reset_parameters()
         reset(self.mlp_h)
-        reset(self.mlp_f)
         reset(self.mlp_g)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
@@ -330,7 +322,7 @@ class PointGNNConv(gnn.MessagePassing):
         out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
         for i, layer in enumerate(self.mlp_g):
             out = layer(out, w[i])
-        return x + out
+        return x + out, delta
 
     def message(
         self, pos_j: Tensor, pos_i: Tensor, x_i: Tensor, x_j: Tensor, delta_i: Tensor
@@ -342,7 +334,6 @@ class PointGNNConv(gnn.MessagePassing):
         return (
             f"{self.__class__.__name__}(\n"
             f"  mlp_h={self.mlp_h},\n"
-            f"  mlp_f={self.mlp_f},\n"
             f"  mlp_g={self.mlp_g},\n"
             f")"
         )
@@ -357,7 +348,6 @@ class CloudGenerator(nn.Module):
         self.encoder = rff.layers.GaussianEncoding(
             sigma=10.0, input_size=3, encoded_size=channels // 2
         )
-        # self.layer_norm = nn.LayerNorm(channels)
 
         self.global_conv = nn.Sequential(
             nn.Linear(channels, channels),
@@ -385,11 +375,11 @@ class CloudGenerator(nn.Module):
     def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
 
-        x = self.synthetic_block1(x, pos, edge_index, w[:2])
+        x, _ = self.synthetic_block1(x, pos, edge_index, w[:2])
         # x = self.synthetic_block3(x, edge_index, w=w)
         # x = self.synthetic_block4(x, edge_index, w=w)
-        x = self.synthetic_block2(x, pos, edge_index, w[2:])
-        # x = self.synthetic_block3(x, pos, edge_index, w[2:])
+        x, _ = self.synthetic_block2(x, pos, edge_index, w[2:4])
+        x, _ = self.synthetic_block3(x, pos, edge_index, w[4:])
         
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
@@ -408,24 +398,80 @@ class GaussiansGenerator(nn.Module):
         self.synthetic_block2 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
         self.synthetic_block3 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
         self.synthetic_block4 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        # self.synthetic_block5 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        # self.synthetic_block6 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        # self.synthetic_block5 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
+        # self.synthetic_block6 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
         # self.synthetic_block7 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
         # self.synthetic_block8 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
 
 
     def forward(self, x, pos, edge_index, batch, w):
         x_ = x
-        x = self.synthetic_block1(x, edge_index, w=w)
-        x = self.synthetic_block2(x, edge_index, w=w)
-        x = self.synthetic_block3(x, edge_index, w=w)
-        x = self.synthetic_block4(x, edge_index, w=w)
-        # x = self.synthetic_block5(x, edge_index, w=w)
-        # x = self.synthetic_block6(x, pos, edge_index, w=w)
+        x = self.synthetic_block1(x, edge_index, w=w[:2])
+        x = self.synthetic_block2(x, edge_index, w=w[2:4])
+        x = self.synthetic_block3(x, edge_index, w=w[4:6])
+        x = self.synthetic_block4(x, edge_index, w=w[6:])
+        # x = self.synthetic_block5(x, edge_index, w=w[6:])
+        # x = self.synthetic_block6(x, edge_index, w=w[6:])
         # x = self.synthetic_block7(x, pos, edge_index, w=w)
         # x = self.synthetic_block8(x, pos, edge_index, w=w)
 
         return torch.cat([x, x_], dim=-1)
+
+
+class Gen(nn.Module):
+    def __init__(self, z_dim=128):
+        super().__init__()
+        self.encoder = rff.layers.GaussianEncoding(
+            sigma=10.0, input_size=3, encoded_size=16
+        )
+
+        self.synthetic_block1 = PointGNNConv(32, z_dim)
+        self.synthetic_block2 = PointGNNConv(64, z_dim)
+        self.synthetic_block3 = PointGNNConv(128, z_dim)
+        self.synthetic_block4 = PointGNNConv(128, z_dim)
+        self.synthetic_block5 = PointGNNConv(256, z_dim)
+        self.synthetic_block6 = PointGNNConv(256, z_dim)
+        self.upblock1 = SynthesisLayer(32, 64, z_dim)
+        self.upblock2 = SynthesisLayer(64, 128, z_dim)
+        self.upblock3 = SynthesisLayer(128, 256, z_dim)
+
+        self.global_conv = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(256, 256),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.tail = nn.Sequential(
+            nn.Linear(256 * 2, 256),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(256, 256 // 2),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(256 // 2, 3),
+            nn.Tanh(),
+        )
+
+    def forward(self, pos, edge_index, batch, w):
+        x = self.encoder(pos)
+
+        x, _ = self.synthetic_block1(x, pos, edge_index, w)
+        x = self.upblock1(x, w[0])
+        x, pos = self.synthetic_block2(x, pos, edge_index, w)
+        edge_index = knn_graph(pos, k=6, batch=batch)
+        x = self.upblock2(x, w[0])
+        x, _ = self.synthetic_block3(x, pos, edge_index, w)
+        x, pos = self.synthetic_block4(x, pos, edge_index, w)
+        edge_index = knn_graph(pos, k=6, batch=batch)
+        x = self.upblock3(x, w[0])
+        x, _ = self.synthetic_block5(x, pos, edge_index, w)
+        x, pos = self.synthetic_block6(x, pos, edge_index, w)
+        
+        h = global_max_pool(x, batch)
+        h = self.global_conv(h)
+        h = h.repeat(x.size(0), 1)
+
+        x = torch.cat([x, h], dim=-1)
+        return self.tail(x), x
 
 
 class ImageGenerator(nn.Module):
@@ -435,7 +481,7 @@ class ImageGenerator(nn.Module):
         self.point_encoder = CloudGenerator(z_dim=z_dim)
         self.gaussians = GaussiansGenerator(c, z_dim=z_dim)
         self.decoder = GaussianDecoder(256 + 256)
-        self.num_ws = 10
+        self.num_ws = 14
         self.z_dim = z_dim
 
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))
@@ -471,10 +517,10 @@ class ImageGenerator(nn.Module):
 
         images = []
         for camera, w in zip(cameras, ws):
-            point_cloud, points_features = self.point_encoder(pos, edge_index, batch, w[:4])
-            new_edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
+            point_cloud, points_features = self.point_encoder(pos, edge_index, batch, w[:6])
+            # new_edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
 
-            gaussian = self.gaussians(points_features, point_cloud, new_edge_index, batch, w[4:])
+            gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, w[6:])
             gaussian_model = self.decoder(gaussian, point_cloud)
             image = render(camera, gaussian_model, self.background, use_rgb=True)
             images.append(image)
