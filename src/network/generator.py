@@ -12,12 +12,12 @@ from conf.models import GeneratorConfig
 from src.network.layers import (
     LINKX,
     GlobalPoolingLayer,
-    MappingNetwork,
     PointGNNConv,
     trunc_exp,
 )
-from src.utils.camera import Camera
+from src.utils.camera import Camera, extract_cameras
 from src.utils.render import GaussianModel, render
+from src.network.networks_stylegan2 import MappingNetwork
 
 
 class CloudNetwork(nn.Module):
@@ -37,7 +37,9 @@ class CloudNetwork(nn.Module):
             sigma=10.0, input_size=3, encoded_size=in_channels // 2
         )
 
-        self.global_pooling = GlobalPoolingLayer(**pooling_config, layers=out_channels)
+        self.global_pooling = GlobalPoolingLayer(
+            **pooling_config, channels=out_channels
+        )
 
         self.position_decoder = nn.Sequential(
             nn.Linear(out_channels * 2, out_channels),
@@ -73,7 +75,7 @@ class CloudNetwork(nn.Module):
         h = self.global_pooling(x, batch)
         x = torch.cat([x, h], dim=-1)
 
-        return self.position_decoder(x), x
+        return self.position_decoder(x) * 1.5, x
 
 
 class FeatureNetwork(nn.Module):
@@ -124,7 +126,7 @@ class GaussianDecoder(nn.Module):
         hidden_channels: list[int],
         max_scale: float = 0.02,
         shs_degree: int = 3,
-        use_rgb: bool = False,
+        use_rgb: bool = True,
         xyz_offset: bool = True,
         restrict_offset: bool = True,
     ):
@@ -143,14 +145,13 @@ class GaussianDecoder(nn.Module):
         }
 
         layers = [in_channels] + hidden_channels
-        self.mlp = nn.Sequential()
+        self.mlp = nn.ModuleList()
         for in_c, out_c in pairwise(layers):
-            self.mlp.add_module("linear", nn.Linear(in_c, out_c))
-            self.mlp.add_module("leaky_relu", nn.LeakyReLU(inplace=True))
+            self.mlp.append(nn.Sequential(nn.Linear(in_c, out_c), nn.LeakyReLU(inplace=True)))
 
         self.decoders = torch.nn.ModuleList()
         for key, channels in self.feature_channels.items():
-            layer = nn.Linear(in_channels, channels)
+            layer = nn.Linear(hidden_channels[-1], channels)
 
             if key == "scaling":
                 torch.nn.init.constant_(layer.bias, -5.0)
@@ -163,7 +164,8 @@ class GaussianDecoder(nn.Module):
             self.decoders.append(layer)
 
     def forward(self, x: Tensor, point_cloud: Tensor | None = None) -> GaussianModel:
-        v = self.mlp(x)
+        for layer in self.mlp:
+            x = layer(x)
 
         ret = {}
         for k, layer in zip(self.feature_channels.keys(), self.decoders):
@@ -182,7 +184,8 @@ class GaussianDecoder(nn.Module):
                     v = torch.tanh(v)
                 else:
                     if self.restrict_offset:
-                        v = v * 0.01
+                        max_step = 1.2 / 32
+                        v = (torch.sigmoid(v) - 0.5) * max_step
                     v = v + point_cloud if self.xyz_offset else point_cloud
             ret[k] = v
 
@@ -195,10 +198,6 @@ class GaussianGenerator(nn.Module):
         self.config = generator_config
         noise_channels = self.config.noise_channels
 
-        self.mapping_network = MappingNetwork(
-            channels=noise_channels,
-            num_layers=self.config.mapping_layers,
-        )
         self.cloud_network = CloudNetwork(
             style_channels=noise_channels,
             **self.config.cloud_network,
@@ -215,19 +214,21 @@ class GaussianGenerator(nn.Module):
             + self.feature_network.synthethic_layers
         )
 
+        self.mapping_network = MappingNetwork(512, 0, 512, self.synthethic_layers)
+
     def forward(self, noise: Tensor, sphere: Data) -> GaussianModel:
         pos, edge_index, batch = sphere.pos, sphere.edge_index, sphere.batch
 
         noise = noise.unsqueeze(0)
-        styles = self.mapping_network(noise)
-        styles = styles.expand(self.synthethic_layers, -1)
+        styles = self.mapping_network(noise, None).squeeze(0)
+        # styles = styles.repeat(self.synthethic_layers, 1)
 
         pos, cloud_features = self.cloud_network(pos, edge_index, batch, styles)
         features = self.feature_network(cloud_features, pos, edge_index, batch, styles)
         return self.decoder(features, pos)
 
 
-class Generator(nn.Module):
+class ImageGenerator(nn.Module):
     def __init__(
         self,
         generator_config: GeneratorConfig,
@@ -237,18 +238,27 @@ class Generator(nn.Module):
         super().__init__()
         self.image_size = image_size
         self.gaussian_generator = GaussianGenerator(generator_config)
+        self.use_rgb = generator_config.decoder.use_rgb
 
         self.background: torch.Tensor
         self.register_buffer(
             "background", torch.tensor(background, dtype=torch.float32)
         )
 
-    def forward(self, noises: Tensor, sphere: Data, cameras: Camera) -> Tensor:
-        images = torch.empty(len(noises), 3, self.image_size, self.image_size)
+    def forward(self, noises: Tensor, sphere: Data, cameras: Tensor) -> Tensor:
+        with torch.no_grad():
+            pose = cameras[:, :16].reshape(-1, 4, 4)
+            fovx = cameras[:, 16]
+            fovy = cameras[:, 17]
+            cameras = extract_cameras(pose, fovx, fovy, self.image_size)
+
+        images = torch.empty(
+            len(noises), 3, self.image_size, self.image_size, device=noises.device
+        )
 
         for i, (noise, camera) in enumerate(zip(noises, cameras)):
             gaussian_model = self.gaussian_generator(noise, sphere)
-            img = render(gaussian_model, camera, self.background)
+            img = render(camera, gaussian_model, self.background, use_rgb=self.use_rgb)
             images[i] = img
 
         return images

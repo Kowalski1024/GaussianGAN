@@ -137,11 +137,11 @@ class LINKX(torch.nn.Module):
 
         channels = [hidden_channels] * synthethic_layers + [out_channels]
         self.final_mlp = nn.ModuleList()
-        for channel_in, channel_out in pairwise(channels):
+        for in_c, out_c in pairwise(channels):
             self.final_mlp.append(
                 SynthesisLayer(
-                    channel_in=channel_in,
-                    channel_out=channel_out,
+                    in_channels=in_c,
+                    out_channels=out_c,
                     style_channels=style_channels,
                     use_noise=use_noise,
                     rank=rank,
@@ -168,11 +168,10 @@ class LINKX(torch.nn.Module):
         x: OptTensor,
         pos: OptTensor,
         edge_index: Adj,
-        edge_weight: OptTensor = None,
         w=None,
     ) -> Tensor:
         """"""  # noqa: D419
-        out = self.edge_lin(edge_index, edge_weight)
+        out = self.edge_lin(edge_index, None)
 
         if self.edge_norm is not None and self.edge_mlp is not None:
             out = self.leakyrelu(out)
@@ -211,7 +210,7 @@ class PointGNNConv(gnn.MessagePassing):
         in_channels,
         out_channels,
         style_channels,
-        synthetic_layers=2,
+        synthethic_layers=2,
         use_noise=False,
         rank: int = 10,
         **kwargs,
@@ -226,13 +225,13 @@ class PointGNNConv(gnn.MessagePassing):
             nn.Tanh(),
         )
 
-        layers = [in_channels + 3] + [in_channels] * synthetic_layers
+        layers = [in_channels + 3] + [in_channels] * synthethic_layers
         self.mlp_g = nn.ModuleList()
-        for channel_in, channel_out in pairwise(layers):
+        for in_c, out_c in pairwise(layers):
             self.mlp_g.append(
                 SynthesisLayer(
-                    channel_in=channel_in,
-                    channel_out=channel_out,
+                    in_channels=in_c,
+                    out_channels=out_c,
                     style_channels=style_channels,
                     use_noise=use_noise,
                     rank=rank,
@@ -315,9 +314,10 @@ class GlobalPoolingLayer(nn.Module):
         )
 
     def forward(self, x, batch):
-        x = self.pool(x, batch)
-        x = self.global_layers(x)
-        return x
+        h = self.pool(x, batch)
+        h = self.global_layers(h)
+        h = h.repeat(x.size(0), 1)
+        return h
 
 
 class _TruncExp(torch.autograd.Function):  # pylint: disable=abstract-method

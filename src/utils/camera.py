@@ -12,8 +12,28 @@ class Camera(NamedTuple):
     image_height: int
     image_width: int
 
+    def to(self, device):
+        return Camera(
+            FoVx=self.FoVx,
+            FoVy=self.FoVy,
+            world_view_transform=self.world_view_transform.to(device),
+            full_proj_transform=self.full_proj_transform.to(device),
+            camera_center=self.camera_center.to(device),
+            image_height=self.image_height,
+            image_width=self.image_width,
+        )
+    
+    def as_tensor(self) -> torch.Tensor:
+        return torch.stack(
+            [
+                self.world_view_transform,
+                torch.tensor(self.FoVx),
+                torch.tensor(self.FoVy),
+            ]
+        )
 
-def extract_cameras(camera_to_world, fovx, fovy, image_resolution=128) -> list[Camera]:
+
+def extract_cameras(camera_to_world, fovx, fovy, image_resolution) -> list[Camera]:
     w2c = torch.inverse(camera_to_world)
 
     world_view_transform = w2c.transpose(-2, -1)
@@ -43,6 +63,30 @@ def extract_cameras(camera_to_world, fovx, fovy, image_resolution=128) -> list[C
         )
 
     return cameras
+
+
+def _get_projection_matrices(znear, zfar, fovX, fovY):
+    bath_size = fovX.shape[0]
+    tanHalfFovY = torch.tan((fovY / 2))
+    tanHalfFovX = torch.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = torch.zeros((bath_size, 4, 4), device=fovX.device)
+
+    z_sign = 1.0
+
+    P[:, 0, 0] = 2.0 * znear / (right - left)
+    P[:, 1, 1] = 2.0 * znear / (top - bottom)
+    P[:, 0, 2] = (right + left) / (right - left)
+    P[:, 1, 2] = (top + bottom) / (top - bottom)
+    P[:, 3, 2] = z_sign
+    P[:, 2, 2] = z_sign * zfar / (zfar - znear)
+    P[:, 2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
 
 
 def generate_cameras(batch_size: int, device):
@@ -101,30 +145,6 @@ def uniform_circle(low: float, high: float):
     sample = np.random.uniform(low=0, high=1)
     sample_radians = np.arccos(np.cos(low) - sample * (np.cos(low) - np.cos(high)))
     return sample_radians / np.pi * 180
-
-
-def _get_projection_matrices(znear, zfar, fovX, fovY):
-    bath_size = fovX.shape[0]
-    tanHalfFovY = torch.tan((fovY / 2))
-    tanHalfFovX = torch.tan((fovX / 2))
-
-    top = tanHalfFovY * znear
-    bottom = -top
-    right = tanHalfFovX * znear
-    left = -right
-
-    P = torch.zeros((bath_size, 4, 4), device=fovX.device)
-
-    z_sign = 1.0
-
-    P[:, 0, 0] = 2.0 * znear / (right - left)
-    P[:, 1, 1] = 2.0 * znear / (top - bottom)
-    P[:, 0, 2] = (right + left) / (right - left)
-    P[:, 1, 2] = (top + bottom) / (top - bottom)
-    P[:, 3, 2] = z_sign
-    P[:, 2, 2] = z_sign * zfar / (zfar - znear)
-    P[:, 2, 3] = -(zfar * znear) / (zfar - znear)
-    return P
 
 
 def _trans_t(t):

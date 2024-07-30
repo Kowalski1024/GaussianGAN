@@ -1,10 +1,12 @@
 import torch
 from torch.utils.data import Dataset
-from src.dataset import SyntheticDataset
+from src.dataset import CarsShapeNetDataset
 from torchvision import transforms
 import PIL.Image
 import numpy as np
 from pathlib import Path
+from omegaconf import DictConfig
+import hydra
 
 
 class AverageValueMeter:
@@ -30,11 +32,19 @@ class AverageValueMeter:
         self.count += n
 
 
-def get_dataset(path: str | Path) -> Dataset:
+def pc_normalize(pc):
+    centroid = torch.mean(pc, axis=0)
+    pc = pc - centroid
+    m = torch.max(torch.sqrt(torch.sum(pc**2, axis=1)))
+
+    return pc / m
+
+
+def get_dataset(dataset_config: DictConfig) -> Dataset:
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
     )
-    dataset = SyntheticDataset(path, transform)
+    dataset = hydra.utils.instantiate(dataset_config, transform=transform)
     return dataset
 
 
@@ -84,7 +94,9 @@ def setup_snapshot_image_grid(
     images = np.stack(
         [image for group in label_groups.values() for image in group], axis=0
     )
-    labels = np.stack([label for label in label_groups.keys() for _ in range(grid_w)], axis=0)
+    labels = np.stack(
+        [label for label in label_groups.keys() for _ in range(grid_w)], axis=0
+    )
 
     return images, labels
 
