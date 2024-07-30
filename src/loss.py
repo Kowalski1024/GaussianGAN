@@ -107,22 +107,15 @@ class GANLoss(LightningModule):
         real_logits = self.run_discriminator(real_imgs_tmp, cameras)
         loss_real = self.adversarial_loss(-real_logits)
 
-        self.manual_backward((loss_real).mean())
+        self.manual_backward(loss_real.mean())
         opt_d.step()
 
         self.real_score_meter.update(real_logits.mean())
         self.fake_score_meter.update(fake_logits.mean())
 
+        self.log("d_loss", loss_real.mean() + loss_fake.mean(), prog_bar=True)
         self.log_dict(
             {
-                "real_avg_score": self.real_score_meter.avg,
-                "fake_avg_score": self.fake_score_meter.avg,
-            },
-            prog_bar=True,
-        )
-        self.log_dict(
-            {
-                "d_loss": loss_real.mean() + loss_fake.mean(),
                 "fake_score": fake_logits.mean(),
                 "real_score": real_logits.mean(),
             }
@@ -139,7 +132,7 @@ class GANLoss(LightningModule):
         self.manual_backward(g_loss)
         opt_g.step()
 
-        self.log("g_loss", g_loss)
+        self.log("g_loss", g_loss, prog_bar=True)
 
         return {"real_loss": loss_real, "fake_loss": loss_fake, "g_loss": g_loss}
 

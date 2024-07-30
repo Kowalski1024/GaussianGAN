@@ -3,6 +3,7 @@ from pathlib import Path
 import hydra
 from omegaconf import OmegaConf, DictConfig
 import torch
+from pytorch_lightning.strategies import DDPStrategy
 
 from src.network.generator import ImageGenerator
 
@@ -51,7 +52,11 @@ def main(cfg: MainConfig) -> None:
         main_config=cfg,
     )
     trainer = Trainer(
-        max_epochs=200, limit_train_batches=16, log_every_n_steps=4, logger=loggers
+        max_epochs=200,
+        limit_train_batches=16,
+        log_every_n_steps=4,
+        logger=loggers,
+        strategy=DDPStrategy(find_unused_parameters=True),
     )
     trainer.fit(model)
 
