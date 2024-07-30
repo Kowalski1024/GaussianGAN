@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import hydra
@@ -6,13 +5,13 @@ from omegaconf import OmegaConf, DictConfig
 import torch
 
 from src.network.generator import ImageGenerator
-# from src.network.discriminator import Discriminator
+
 from src.utils.training import get_dataset
 from conf.main_config import MainConfig
 from pytorch_lightning.trainer import Trainer, seed_everything
 from src.utils.pylogger import RankedLogger
 from src.utils.instantiators import instantiate_loggers
-from src.loss.lsgan_loss import LSGANLoss
+from src.loss import GANLoss
 from src.network.networks_stylegan2 import Discriminator
 
 logger = RankedLogger(__name__, rank_zero_only=True)
@@ -31,27 +30,29 @@ def main(cfg: MainConfig) -> None:
     )
     logger.info(f"Hydra output directory: {hydra_output_dir}")
 
-    seed_everything(cfg.seed)
+    seed_everything(seed=cfg.seed)
 
     loggers = instantiate_loggers(cfg.logger)
 
     generator = ImageGenerator(
-        config=cfg.generator, image_resolution=cfg.image_resolution
+        generator_config=cfg.generator,
+        image_size=cfg.dataset.image_size,
+        background=cfg.dataset.background,
     )
-    # discriminator = Discriminator(
-    #     config=cfg.discriminator, image_resolution=cfg.image_resolution
-    # )
     discriminator = Discriminator()
-    dataset = get_dataset(cfg.dataset.data_dir)
+    dataset = get_dataset(cfg.dataset)
+    print(generator)
 
-    model = LSGANLoss(
-        use_stylemix=True,
+    model = GANLoss(
+        **cfg.training.loss,
         generator=generator,
         discriminator=discriminator,
         dataset=dataset,
         main_config=cfg,
     )
-    trainer = Trainer(max_epochs=100, limit_train_batches=16, log_every_n_steps=4, logger=loggers)
+    trainer = Trainer(
+        max_epochs=200, limit_train_batches=16, log_every_n_steps=4, logger=loggers
+    )
     trainer.fit(model)
 
 
