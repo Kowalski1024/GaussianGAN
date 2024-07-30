@@ -4,74 +4,51 @@ from typing import Any
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 import conf.optimizers as optimizers
+import conf.models as models
 
 
 @dataclass
 class DatasetConfig:
-    data_dir: str = MISSING
+    _target_: str = "src.dataset.CarsShapeNetDataset"
+    path: str = "datasets/cars_train.zip"
+    image_size: int = 128
+    background: tuple[int, int, int] = (1, 1, 1)
+
+
+@dataclass
+class DataloaderConfig:
     batch_size: int = 16
     num_workers: int = 1
     pin_memory: bool = True
+    shuffle: bool = True
 
 
 @dataclass
 class GANLossConfig:
-    use_stylemix: bool = True
+    stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
-    blur_fade_epochs: int = 0
-    r1_gamma: float = 0.3
-
-
-@dataclass
-class GeneratorConfig:
-    points: int = 4096
-    noise_dim: int = 256
-    knn: int = 6
-    xyz_mult: float = 0.75
-
-    cloud_channels: int = 128
-    cloud_layers: int = 1
-
-    gaussian_channels: int = 256
-    gaussian_layers: int = 3
-
-    decoder_channels: int = 256
-    decoder_layers: int = 2
-
-    shs_degree: int = 3
-    use_rgb: bool = True
-    xyz_offset: bool = True
-    restrict_offset: bool = True
-
-    optimizer: optimizers.OptimizerConfig = field(
-        default_factory=optimizers.AdamWOptimizerConfig
-    )
-
-
-@dataclass
-class DiscriminatorConfig:
-    mapping_layers: int = 8
-    mappping_in_channels: int = 18
-    mapping_hidden_channels: int = 128
-    mapping_out_channels: int = 128
-
-    optimizer: optimizers.OptimizerConfig = field(
-        default_factory=optimizers.AdamWOptimizerConfig
-    )
-    scheluder: optimizers.ScheduledConfig = field(
-        default_factory=optimizers.LSGANSchedulerConfig
-    )
+    blur_fade_epochs: int = 3
+    r1_gamma: float = 0.0
 
 
 @dataclass
 class TrainingConfig:
-    generator_interval: int = 1
-    discriminator_interval: int = 1
-    generator_warmup: int = 10
-    loss: GANLossConfig = field(default_factory=GANLossConfig)
-
     image_grid_size: tuple[int, int] = (16, 16)
     image_save_interval: int = 1
+
+    generator_warmup: int = 0
+    loss: GANLossConfig = field(default_factory=GANLossConfig)
+
+    generator_optimizer: optimizers.OptimizerConfig = field(
+        default_factory=optimizers.AdamOptimizerConfig
+    )
+    discriminator_optimizer: optimizers.OptimizerConfig = field(
+        default_factory=optimizers.AdamOptimizerConfig
+    )
+
+    discriminator_scheduler: optimizers.ScheduledConfig = field(
+        default_factory=optimizers.GANSchedulerConfig
+    )
 
 
 @dataclass
@@ -87,12 +64,12 @@ class MainConfig:
     paths: dict = field(default_factory=lambda: {})
     logger: dict = field(default_factory=lambda: {})
 
-    generator: GeneratorConfig = field(default_factory=GeneratorConfig)
-    discriminator: DiscriminatorConfig = field(default_factory=DiscriminatorConfig)
+    generator: models.GeneratorConfig = field(default_factory=models.GeneratorConfig)
+    discriminator: models.DiscriminatorConfig = field(default_factory=models.DiscriminatorConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
-    image_resolution: int = MISSING
     seed: int = 42
     task_name: str = "train"
 

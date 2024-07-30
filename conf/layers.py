@@ -19,5 +19,5 @@ class LINKXConfig:
 
 @dataclass
 class GlobalPoolingConfig:
-    type: str = MISSING
+    type: str = "max"
     layers: int = 2

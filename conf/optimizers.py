@@ -18,14 +18,14 @@ class SGDOptimizerConfig(OptimizerConfig):
 class AdamOptimizerConfig(OptimizerConfig):
     _target_: str = "torch.optim.Adam"
     weight_decay: float = 0.0
-    betas: tuple[float, float] = (0.5, 0.99)
+    betas: tuple[float, float] = (0.0, 0.99)
 
 
 @dataclass
 class AdamWOptimizerConfig(OptimizerConfig):
     _target_: str = "torch.optim.AdamW"
     weight_decay: float = 0.01
-    betas: tuple[float, float] = (0.5, 0.99)
+    betas: tuple[float, float] = (0.0, 0.99)
 
 
 @dataclass
@@ -39,8 +39,8 @@ class ScheduledConfig:
 
 @dataclass
 class GANSchedulerConfig(ScheduledConfig):
-    ideal_loss: float = np.log(4)
-    x_min: float = 0.1 * np.log(4)
-    x_max: float = 0.1 * np.log(4)
+    ideal_loss: float = 1.386 # np.log(4) = 1.386
+    x_min: float = 0.1 * 1.386
+    x_max: float = 0.1 * 1.386
     h_min: float = 0.1
     f_max: float = 2.0

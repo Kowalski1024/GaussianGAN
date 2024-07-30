@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from omegaconf import MISSING
 import conf.optimizers as optimizers
 from conf.layers import PointGNNConfig, GlobalPoolingConfig, LINKXConfig
-from typing import Optional
 
 
 @dataclass
@@ -11,12 +10,12 @@ class CloudNetworkConfig:
     hidden_channels: list[int] = field(default_factory=lambda: [128, 128])
     out_channels: int = 128
     layers_config: PointGNNConfig = field(default_factory=PointGNNConfig)
-    pooling_config: GlobalPoolingConfig = field(default_factory=GlobalPoolingConfig(type="max"))
+    pooling_config: GlobalPoolingConfig = field(default_factory=GlobalPoolingConfig)
 
 
 @dataclass
 class FeatureNetworkConfig:
-    in_channels: int = 128
+    in_channels: int = 256
     hidden_channels: list[int] = field(default_factory=lambda: [256, 256, 256])
     out_channels: int = 256
     layers_config: LINKXConfig = field(default_factory=LINKXConfig)
@@ -24,7 +23,7 @@ class FeatureNetworkConfig:
 
 @dataclass
 class DecoderConfig:
-    in_channels: int = 256
+    in_channels: int = 512
     hidden_channels: list[int] = field(default_factory=lambda: [256, 256])
     max_scale: float = 0.02
     shs_degree: int = 3
@@ -36,7 +35,7 @@ class DecoderConfig:
 @dataclass
 class GeneratorConfig:
     _target_: str = MISSING
-    points: int = 4096
+    points: int = 2048
     knn: int = 6
 
     noise_channels: int = 512
@@ -48,12 +47,10 @@ class GeneratorConfig:
     feature_network: FeatureNetworkConfig = field(default_factory=FeatureNetworkConfig)
     decoder: DecoderConfig = field(default_factory=DecoderConfig)
 
-
     # optimizer
     optimizer: optimizers.OptimizerConfig = field(
         default_factory=optimizers.AdamWOptimizerConfig
     )
-
 
 
 @dataclass
