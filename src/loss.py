@@ -48,7 +48,7 @@ class GANLoss(LightningModule):
         self.batch_size = main_config.dataloader.batch_size
         self.noise_channels = main_config.generator.noise_channels
         self.points = main_config.generator.points
-        self.sphere = self.generate_sphere(self.points)
+        self.sphere = self.generate_sphere(self.points, main_config.generator.knn)
 
         # models
         self.generator = generator
@@ -58,11 +58,11 @@ class GANLoss(LightningModule):
         # metrics
         self.labels = None
         self.grid_size = self.main_config.training.image_grid_size
-        self.valid_z = self.generate_noise(self.grid_size[0] * self.grid_size[1], self.noise_channels)
+        self.valid_z = self.generate_noise(
+            self.grid_size[0] * self.grid_size[1], self.noise_channels
+        )
         self.images_path = Path(f"{self.main_config.paths.output_dir}/images")
         self.images_path.mkdir(parents=True, exist_ok=True)
-        self.real_score_meter = training_utils.AverageValueMeter()
-        self.fake_score_meter = training_utils.AverageValueMeter()
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
@@ -90,7 +90,7 @@ class GANLoss(LightningModule):
         noise = self.generate_noise(self.batch_size, self.noise_channels)
         noise = noise.to(real_imgs.device)
 
-        # Train discriminator
+        ### Train discriminator
         opt_d.zero_grad()
 
         # Minimize logits for generated images
@@ -98,30 +98,19 @@ class GANLoss(LightningModule):
             fake_imgs = self.generator(noise, sphere, cameras)
 
         fake_logits = self.run_discriminator(fake_imgs, cameras)
-        loss_fake = self.adversarial_loss(fake_logits)
-        self.manual_backward(loss_fake.mean())
+        loss_fake = self.adversarial_loss(fake_logits).mean()
+        self.manual_backward(loss_fake)
 
         # Maximize logits for real images
         real_imgs_tmp = real_imgs.detach().requires_grad_(self.r1_gamma != 0.0)
 
         real_logits = self.run_discriminator(real_imgs_tmp, cameras)
-        loss_real = self.adversarial_loss(-real_logits)
+        loss_real = self.adversarial_loss(-real_logits).mean()
 
-        self.manual_backward(loss_real.mean())
+        self.manual_backward(loss_real)
         opt_d.step()
 
-        self.real_score_meter.update(real_logits.mean())
-        self.fake_score_meter.update(fake_logits.mean())
-
-        self.log("d_loss", loss_real.mean() + loss_fake.mean(), prog_bar=True)
-        self.log_dict(
-            {
-                "fake_score": fake_logits.mean(),
-                "real_score": real_logits.mean(),
-            }
-        )
-
-        # Train generator
+        ### Train generator
         opt_g.zero_grad()
 
         fake_imgs = self.generator(noise, sphere, cameras)
@@ -132,13 +121,41 @@ class GANLoss(LightningModule):
         self.manual_backward(g_loss)
         opt_g.step()
 
-        self.log("g_loss", g_loss, prog_bar=True)
+        ### Progress bar
+        self.log_dict(
+            {
+                "d_loss": loss_real + loss_fake,
+                "g_loss": g_loss,
+            },
+            prog_bar=True,
+            logger=False,
+        )
 
-        return {"real_loss": loss_real, "fake_loss": loss_fake, "g_loss": g_loss}
+        ### Log metrics
+        self.log_dict(
+            {
+                "epoch": self.current_epoch,
+                "kimg": self._kimg,
+                "generator_loss": g_loss,
+                "discriminator_loss": loss_real + loss_fake,
+                "real_logits": real_logits.mean(),
+                "real_images": fake_logits.mean(),
+                "blur_sigma": self.curr_blur_sigma,
+            },
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
 
-    def generate_sphere(self, points: int) -> Data:
+        return {
+            "g_loss": g_loss,
+            "real_loss": loss_real,
+            "fake_loss": loss_fake,
+        }
+
+    def generate_sphere(self, points: int, k: int) -> Data:
         sphere = training_utils.fibonacci_sphere(points)
-        edge_index = knn_graph(sphere, k=6, batch=None, loop=False)
+        edge_index = knn_graph(sphere, k=k, batch=None, loop=False)
         return Data(pos=sphere, edge_index=edge_index)
 
     def generate_noise(
@@ -219,3 +236,7 @@ class GANLoss(LightningModule):
             self.dataset,
             **self.main_config.dataloader,
         )
+
+    @property
+    def _kimg(self):
+        return round((self.global_step * self.batch_size) / 1000, 3)

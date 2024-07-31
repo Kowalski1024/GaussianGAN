@@ -1,19 +1,17 @@
 from pathlib import Path
 
 import hydra
-from omegaconf import OmegaConf, DictConfig
-import torch
+from omegaconf import OmegaConf
 from pytorch_lightning.strategies import DDPStrategy
-
-from src.network.generator import ImageGenerator
-
-from src.utils.training import get_dataset
-from conf.main_config import MainConfig
 from pytorch_lightning.trainer import Trainer, seed_everything
-from src.utils.pylogger import RankedLogger
-from src.utils.instantiators import instantiate_loggers
+
+from conf.main_config import MainConfig
 from src.loss import GANLoss
+from src.network.generator import ImageGenerator
 from src.network.networks_stylegan2 import Discriminator
+from src.utils.instantiators import instantiate_loggers
+from src.utils.pylogger import RankedLogger
+from src.utils.training import get_dataset
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -51,13 +49,14 @@ def main(cfg: MainConfig) -> None:
         dataset=dataset,
         main_config=cfg,
     )
+    
     trainer = Trainer(
         max_epochs=10,
-        limit_train_batches=16,
-        log_every_n_steps=4,
+        limit_train_batches=64,
+        log_every_n_steps=16,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
-        enable_progress_bar=False,
+        enable_progress_bar=cfg.enable_progress_bar,
     )
     trainer.fit(model)
 
