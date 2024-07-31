@@ -35,7 +35,7 @@ class DecoderConfig:
 @dataclass
 class GeneratorConfig:
     _target_: str = MISSING
-    points: int = 2048
+    points: int = 8192
     knn: int = 6
 
     noise_channels: int = 512

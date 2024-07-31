@@ -34,7 +34,8 @@ class GANLossConfig:
 @dataclass
 class TrainingConfig:
     image_grid_size: tuple[int, int] = (16, 16)
-    image_save_interval: int = 1
+    image_save_interval: int = 5
+    enable_progress_bar: bool = False
 
     generator_warmup: int = 0
     loss: GANLossConfig = field(default_factory=GANLossConfig)

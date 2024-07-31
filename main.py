@@ -52,11 +52,12 @@ def main(cfg: MainConfig) -> None:
         main_config=cfg,
     )
     trainer = Trainer(
-        max_epochs=200,
+        max_epochs=10,
         limit_train_batches=16,
         log_every_n_steps=4,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
+        enable_progress_bar=False,
     )
     trainer.fit(model)
 
