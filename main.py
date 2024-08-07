@@ -1,4 +1,5 @@
 from pathlib import Path
+import torch
 
 import hydra
 from omegaconf import OmegaConf
@@ -23,6 +24,7 @@ def main(cfg: MainConfig) -> None:
     Args:
         cfg (MainConfig): Hydra config object with all the settings. (Located in config/main_config.py)
     """
+    torch.set_float32_matmul_precision("high")
     logger.info(f"\n{OmegaConf.to_yaml(cfg)}")
     hydra_output_dir = Path(
         hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -51,7 +53,7 @@ def main(cfg: MainConfig) -> None:
     )
     
     trainer = Trainer(
-        max_epochs=10,
+        max_epochs=1000,
         limit_train_batches=64,
         log_every_n_steps=16,
         logger=loggers,

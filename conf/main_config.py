@@ -27,14 +27,14 @@ class DataloaderConfig:
 class GANLossConfig:
     stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
-    blur_fade_epochs: int = 3
+    blur_fade_epochs: int = 10
     r1_gamma: float = 0.0
 
 
 @dataclass
 class TrainingConfig:
     image_grid_size: tuple[int, int] = (16, 16)
-    image_save_interval: int = 1
+    image_save_interval: int = 5
 
     generator_warmup: int = 0
     loss: GANLossConfig = field(default_factory=GANLossConfig)
