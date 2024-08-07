@@ -28,7 +28,7 @@ class GANLossConfig:
     stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
     blur_fade_epochs: int = 10
-    r1_gamma: float = 0.0
+    r1_gamma: float = 1.0
 
 
 @dataclass

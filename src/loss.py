@@ -81,6 +81,7 @@ class GANLoss(LightningModule):
         return F.softplus(logits)
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
+        r1_gamma = self.r1_gamma if batch_idx % 4 == 0 else 0.0
         opt_g, opt_d = self.optimizers()
 
         real_imgs, cameras = batch
@@ -102,12 +103,15 @@ class GANLoss(LightningModule):
         self.manual_backward(loss_fake)
 
         # Maximize logits for real images
-        real_imgs_tmp = real_imgs.detach().requires_grad_(self.r1_gamma != 0.0)
+        real_imgs_tmp = real_imgs.detach().requires_grad_(r1_gamma != 0.0)
 
         real_logits = self.run_discriminator(real_imgs_tmp, cameras)
         loss_real = self.adversarial_loss(-real_logits).mean()
 
-        self.manual_backward(loss_real)
+        # R1 regularization
+        r1_penalty = self.r1_penalty(real_logits, real_imgs_tmp, r1_gamma)
+        r1_penalty = r1_penalty.mean().mul(4)
+        self.manual_backward(loss_real + r1_penalty)
         opt_d.step()
 
         ### Train generator
@@ -163,7 +167,7 @@ class GANLoss(LightningModule):
     ) -> torch.Tensor:
         return torch.normal(mean=0.0, std=std, size=(batch_size, noise_channels))
 
-    def r1_penalty(self, real_logits, real_images):
+    def r1_penalty(self, real_logits, real_images, r1_gamma):
         if self.r1_gamma == 0:
             return torch.tensor(0.0, device=real_images.device)
 
@@ -171,7 +175,7 @@ class GANLoss(LightningModule):
             real_logits.sum(), real_images, create_graph=True, only_inputs=True
         )[0]
         grad_penalty = grad_real.square().sum(dim=(1, 2, 3))
-        grad_penalty = grad_penalty * self.r1_gamma
+        grad_penalty = grad_penalty * (r1_gamma / 2)
         return grad_penalty
 
     def setup(self, stage):
