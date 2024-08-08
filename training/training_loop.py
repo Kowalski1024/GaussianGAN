@@ -23,6 +23,7 @@ from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
 from training.scheluder import GapAwareLRScheduler
+import pprint as pp
 
 import legacy
 from metrics import metric_main
@@ -210,6 +211,7 @@ def training_loop(
     loss = dnnlib.util.construct_class_by_name(device=device, G=G, D=D, augment_pipe=augment_pipe, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
     for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval)]:
+        print(name, reg_interval)
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
@@ -219,10 +221,10 @@ def training_loop(
             opt_kwargs.lr = opt_kwargs.lr * mb_ratio
             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
-            # if name == "D":
-            #     phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=2)]
-            # else:
-            phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
+            if name == "D":
+                phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
+            else:
+                phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
         if name == 'D':
             log4 = np.log(4)
@@ -281,6 +283,7 @@ def training_loop(
         progress_fn(0, total_kimg)
 
     single_value = torch.randn(1).item()
+    # pp.pprint(G.synthesis.config)
 
     while True:
 
@@ -428,6 +431,7 @@ def training_loop(
 
         if rank == 0:
             metrics_ = {}
+            metrics_.update(stats_metrics)
             for key, val in stats_dict.items():
                 metrics_[key] = val["mean"]
             wandb.log(metrics_)

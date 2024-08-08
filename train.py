@@ -237,7 +237,7 @@ def main(**kwargs):
         raise click.ClickException('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
 
     # Base configuration.
-    c.ema_kimg = c.batch_size * 10 / 32
+    c.ema_kimg = c.batch_size * 10 / 32 # training/v3/generator.py
     if opts.cfg == 'stylegan2':
         c.G_kwargs.class_name = 'training.v2.gan.Generator'
         c.loss_kwargs.style_mixing_prob = 0.0 # Enable style mixing regularization.
@@ -247,8 +247,8 @@ def main(**kwargs):
         c.loss_kwargs.pl_no_weight_grad = True # Speed up path length regularization by skipping gradient computation wrt. conv2d weights.
         c.G_kwargs.attention = False
         c.G_kwargs.blocks = 3
-        # c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
-        # c.loss_kwargs.blur_fade_kimg = 250 # Fade out the blur during the first N kimg.
+        c.loss_kwargs.blur_init_sigma = 10 # Blur the images seen by the discriminator.
+        c.loss_kwargs.blur_fade_kimg = 350 # Fade out the blur during the first N kimg.
     else:
         c.G_kwargs.class_name = 'training.networks_stylegan3.Generator'
         c.G_kwargs.magnitude_ema_beta = 0.5 ** (c.batch_size / (20 * 1e3))

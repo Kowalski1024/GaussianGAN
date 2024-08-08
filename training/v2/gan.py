@@ -394,10 +394,10 @@ class GaussiansGenerator(nn.Module):
         super().__init__()
         self.z_dim = z_dim
 
-        self.synthetic_block1 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block2 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block3 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        self.synthetic_block4 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
+        self.synthetic_block1 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
+        self.synthetic_block2 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
+        self.synthetic_block3 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
+        self.synthetic_block4 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
         # self.synthetic_block5 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
         # self.synthetic_block6 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
         # self.synthetic_block7 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
@@ -406,10 +406,10 @@ class GaussiansGenerator(nn.Module):
 
     def forward(self, x, pos, edge_index, batch, w):
         x_ = x
-        x = self.synthetic_block1(x, edge_index, w=w[:2])
-        x = self.synthetic_block2(x, edge_index, w=w[2:4])
-        x = self.synthetic_block3(x, edge_index, w=w[4:6])
-        x = self.synthetic_block4(x, edge_index, w=w[6:])
+        x = self.synthetic_block1(x, edge_index, w=w[:3])
+        x = self.synthetic_block2(x, edge_index, w=w[3:6])
+        x = self.synthetic_block3(x, edge_index, w=w[6:9])
+        x = self.synthetic_block4(x, edge_index, w=w[9:])
         # x = self.synthetic_block5(x, edge_index, w=w[6:])
         # x = self.synthetic_block6(x, edge_index, w=w[6:])
         # x = self.synthetic_block7(x, pos, edge_index, w=w)
@@ -481,7 +481,7 @@ class ImageGenerator(nn.Module):
         self.point_encoder = CloudGenerator(z_dim=z_dim)
         self.gaussians = GaussiansGenerator(c, z_dim=z_dim)
         self.decoder = GaussianDecoder(256 + 256)
-        self.num_ws = 14
+        self.num_ws = 18
         self.z_dim = z_dim
 
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))

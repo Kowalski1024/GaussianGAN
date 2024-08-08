@@ -3,17 +3,6 @@ import numpy as np
 
 class GapAwareLRScheduler:
     def __init__(self, optimizer, ideal_loss, x_min, x_max, h_min=0.1, f_max=2.0):
-        """
-        Gap-aware Learning Rate Scheduler for Adversarial Networks.
-
-        Args:
-            optimizer: PyTorch optimizer.
-            ideal_loss: the ideal loss of D.
-            x_min: the value of x at which the scheduler achieves its minimum allowed value h_min.
-            x_max: the value of x at which the scheduler achieves its maximum allowed value f_max.
-            h_min: minimum allowed value of the scheduling function. Default is 0.1.
-            f_max: maximum allowed value of the scheduling function. Default is 2.0.
-        """
         self.optimizer = optimizer
         self.ideal_loss = ideal_loss
         self.smoothed_disc_loss = ideal_loss
@@ -22,6 +11,9 @@ class GapAwareLRScheduler:
         self.x_max = x_max
         self.h_min = h_min
         self.f_max = f_max
+
+        # for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
+        #     param_group["lr"] = 0.0002
 
     def zero_grad(self):
         """
@@ -36,7 +28,7 @@ class GapAwareLRScheduler:
         Args:
             loss: current loss of the discriminator.
         """
-        self.smoothed_disc_loss = 0.95 * self.smoothed_disc_loss + 0.05 * loss
+        self.smoothed_disc_loss = 0.999 * self.smoothed_disc_loss + 0.001 * loss
         loss = self.smoothed_disc_loss
 
         x = np.abs(loss - self.ideal_loss)
