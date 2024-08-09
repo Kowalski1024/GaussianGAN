@@ -43,8 +43,6 @@ class StyleGAN2Loss(Loss):
 
     def run_G(self, z, c, update_emas=False):
         ws = self.G.mapping(z, None, update_emas=update_emas)
-        distances = self.G.synthesis.dist
-        points = ws.shape[1]
 
         # new_ws = self.G.mapping(torch.randn_like(z, device=ws.device), None, update_emas=False)
         # for i in range(len(ws)):
@@ -132,7 +130,7 @@ class StyleGAN2Loss(Loss):
                     lr_mult = self.scheluder.step((loss_Dgen + loss_Dreal).mean().item())
                     training_stats.report('Loss/D/lr_mult', lr_mult)
                     training_stats.report('Loss/D/smooth_loss', self.scheluder.smoothed_disc_loss)
-                    gain *= lr_mult
+                    # gain *= lr_mult
 
                 loss_Dr1 = 0
                 if phase in ['Dreg', 'Dboth']:

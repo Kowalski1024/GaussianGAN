@@ -25,7 +25,7 @@ import numpy as np
 
 
 
-POINTS = 8192
+POINTS = 8192 * 2
 
 def modulated_linear(
     x,  # Input tensor of shape [batch_size, in_features].
@@ -260,6 +260,55 @@ class EdgeConv(MessagePassing):
     def message(self, h_j, pos_j, pos_i):
         edge_feat = torch.cat([h_j, pos_j - pos_i], dim=-1)
         return self.mlp(edge_feat)
+    
+
+# class PointGNNConv(MessagePassing):
+#     r"""The PointGNN operator from the `"Point-GNN: Graph Neural Network for
+#     3D Object Detection in a Point Cloud" <https://arxiv.org/abs/2003.01251>`_
+#     paper.
+#     """
+
+#     def __init__(
+#         self,
+#         channels,
+#         **kwargs,
+#     ):
+#         kwargs.setdefault("aggr", "max")
+#         super().__init__(**kwargs)
+
+#         self.mlp_h = nn.Sequential(
+#             nn.Linear(channels, channels // 2),
+#             nn.LeakyReLU(inplace=True),
+#             nn.Linear(channels // 2, 3),
+#             nn.Tanh(),
+#         )
+
+#         self.mlp_g = nn.Sequential(
+#             nn.Linear(channels + 3, channels),
+#             nn.LeakyReLU(inplace=True),
+#             nn.Linear(channels, channels),
+#             nn.LeakyReLU(inplace=True),
+#         )
+
+#     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj) -> Tensor:
+#         delta = self.mlp_h(x)
+#         out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
+#         out = self.mlp_g(out)
+#         return x + out
+
+#     def message(
+#         self, pos_j: Tensor, pos_i: Tensor, x_i: Tensor, x_j: Tensor, delta_i: Tensor
+#     ) -> Tensor:
+#         # Use the passed delta_i directly, no need to calculate it here
+#         return torch.cat([pos_j - pos_i + delta_i, x_j], dim=-1)
+
+#     def __repr__(self) -> str:
+#         return (
+#             f"{self.__class__.__name__}(\n"
+#             f"  mlp_h={self.mlp_h},\n"
+#             f"  mlp_g={self.mlp_g},\n"
+#             f")"
+#         )
 
 
 class GNNConv(nn.Module):
@@ -419,13 +468,6 @@ class ImageGenerator(nn.Module):
             nn.LeakyReLU(inplace=True),
         )
 
-        self.style2 = nn.Sequential(
-            nn.Linear(z_dim + 3, z_dim),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(z_dim, z_dim),
-            nn.LeakyReLU(inplace=True),
-        )
-
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))
         self.register_buffer("sphere", self._fibonacci_sphere(self.num_ws))
         self.register_buffer("dist", torch.cdist(self.sphere, self.sphere))
@@ -463,11 +505,7 @@ class ImageGenerator(nn.Module):
             style =  self.style(style)
 
             point_cloud, points_features = self.point_encoder(pos, edge_index, batch, style)
-            new_edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
-
-            style = torch.cat([z, point_cloud], dim=-1)
-            style =  self.style2(style)
-            gaussian = self.gaussians(points_features, point_cloud, new_edge_index, batch, style)
+            gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, style)
 
             gaussian_model = self.decoder(gaussian, point_cloud)
             image = render(camera, gaussian_model, self.background, use_rgb=True)
