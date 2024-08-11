@@ -19,6 +19,7 @@ from itertools import pairwise
 from torch_geometric.nn.inits import kaiming_uniform, uniform
 from torch_geometric.utils import spmm
 from torch_geometric.nn.models.linkx import SparseLinear
+from .encoding import MultiResHashGrid
 
 
 
@@ -64,6 +65,65 @@ def fmm_modulate_linear(
 
     return out
 
+def fmm_modulation_matrix(
+    weight: torch.Tensor,
+    styles: torch.Tensor,
+) -> torch.Tensor:
+    c_out, c_in = weight.shape
+    rank = styles.shape[0] // (c_in + c_out)
+
+    assert styles.shape[0] % (c_in + c_out) == 0
+    assert len(styles.shape) == 1
+
+    left_matrix = styles[: c_out * rank]  # [left_matrix_size]
+    right_matrix = styles[c_out * rank :]  # [right_matrix_size]
+
+    left_matrix = left_matrix.view(c_out, rank)  # [c_out, rank]
+    right_matrix = right_matrix.view(rank, c_in)  # [c_out, rank]
+
+    modulation = left_matrix @ right_matrix / np.sqrt(rank)  # [c_out, c_in]
+
+    W = weight * (modulation + 1.0)  # [c_out, c_in]
+    W = W / (W.norm(dim=1, keepdim=True) + 1e-8)  # [c_out, c_in]
+    W = W.to(dtype=weight.dtype)
+
+    return W
+
+
+def sample_b(sigma: float, size: tuple) -> Tensor:
+    return torch.randn(size)
+
+
+@torch.jit.script
+def gaussian_encoding(v: Tensor, b: Tensor) -> Tensor:
+    vp = 2 * np.pi * v @ b.T
+    return torch.cat((torch.cos(vp), torch.sin(vp)), dim=-1)
+
+
+class GaussianEncoding(nn.Module):
+    def __init__(self, 
+                 sigma: float,
+                 input_size: float,
+                 encoded_size: float,
+                 style_channels: int,
+                 b: Tensor | None = None):
+        super().__init__()
+        self.input_size = input_size
+        self.encoded_size = encoded_size
+        self.sigma = sigma
+        self.affine = nn.Linear(style_channels, (input_size + encoded_size) * 10)
+        if b is None:
+            b = sample_b(sigma, (encoded_size, input_size))
+        elif sigma is not None or input_size is not None or encoded_size is not None:
+            raise ValueError('Only specify the "b" argument when using it.')
+        b: Tensor
+        self.register_buffer('b', b)
+
+    def forward(self, v: Tensor, style: Tensor) -> Tensor:
+        style = self.affine(style).squeeze(0)
+        b = fmm_modulation_matrix(self.b, style) * self.sigma
+        return gaussian_encoding(v, b)
+
 
 class SynthesisLayer(torch.nn.Module):
     def __init__(
@@ -98,92 +158,6 @@ class SynthesisLayer(torch.nn.Module):
 
         x = self.activation(x.add_(self.bias))
         return x
-    
-
-class EdgeConv(MessagePassing):
-    def __init__(self, in_channels: int, out_channels: int, z_dim: int):
-        super().__init__(aggr="add")
-
-        self.mlp = nn.ModuleList(
-            [
-                SynthesisLayer(in_channels + 3, out_channels, z_dim),
-                SynthesisLayer(out_channels, out_channels, z_dim),
-            ]
-        )
-
-    def forward(
-        self,
-        h,
-        pos,
-        edge_index,
-        w
-    ):
-        return self.propagate(edge_index, h=h, pos=pos, w=w)
-
-    def message(self, h_j, pos_j, pos_i, w):
-        edge_feat = torch.cat([h_j, pos_j - pos_i], dim=-1)
-        for layer in self.mlp:
-            edge_feat = layer(edge_feat, w)
-        return edge_feat
-
-
-# class SparseLinear(MessagePassing):
-#     def __init__(self, in_channels: int, out_channels: int, features_channels: int, bias: bool = True):
-#         super().__init__(aggr='add')
-#         self.in_channels = in_channels
-#         self.out_channels = out_channels
-#         self.features_channels = features_channels
-
-#         self.mlp = nn.Sequential(
-#             nn.Linear(features_channels, features_channels // 2),
-#             nn.LeakyReLU(),
-#             nn.Linear(features_channels // 2, 3),
-#             nn.Tanh()
-#         )
-
-#         self.weight = nn.Parameter(torch.empty(in_channels, out_channels))
-#         if bias:
-#             self.bias = nn.Parameter(torch.empty(out_channels))
-#         else:
-#             self.register_parameter('bias', None)
-
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         kaiming_uniform(self.weight, fan=self.in_channels, a=math.sqrt(5))
-#         if self.bias is not None:
-#             uniform(self.in_channels, self.bias)
-
-#     def forward(
-#         self,
-#         x: Tensor,
-#         pos: Tensor,
-#         edge_index: Adj,
-#     ) -> Tensor:
-#         # Compute the relative positions for edge features
-#         row, col = edge_index
-#         delta = self.mlp(x[col])
-#         relative_pos = pos[row] - pos[col] + delta
-
-#         # Use the relative position as edge weight
-#         edge_weight = torch.norm(relative_pos, p=2, dim=1)  # Compute the L2 norm
-
-#         # propagate_type: (weight: Tensor, edge_weight: OptTensor)
-#         out = self.propagate(edge_index, weight=self.weight, edge_weight=edge_weight)
-
-#         if self.bias is not None:
-#             out = out + self.bias
-
-#         return out
-
-#     def message(self, weight_j: Tensor, edge_weight: OptTensor) -> Tensor:
-#         if edge_weight is None:
-#             return weight_j
-#         else:
-#             return edge_weight.view(-1, 1) * weight_j
-
-#     def message_and_aggregate(self, adj_t: Adj, weight: Tensor) -> Tensor:
-#         return spmm(adj_t, weight, reduce=self.aggr)
     
 
 class LINKX(torch.nn.Module):
@@ -296,11 +270,11 @@ class PointGNNConv(gnn.MessagePassing):
         kwargs.setdefault("aggr", "max")
         super().__init__(**kwargs)
 
-        self.mlp_h = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(channels // 2, 3),
-            nn.Tanh(),
+        self.mlp_h = nn.ModuleList(
+            [
+                SynthesisLayer(channels, channels // 2, z_dim),
+                SynthesisLayer(channels // 2, 3, z_dim, activation=nn.Tanh()),
+            ]
         )
 
         self.mlp_g = nn.ModuleList(
@@ -318,7 +292,9 @@ class PointGNNConv(gnn.MessagePassing):
         reset(self.mlp_g)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
-        delta = self.mlp_h(x)
+        delta = x
+        for i, layer in enumerate(self.mlp_h):
+            delta = layer(delta, w[i])
         out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
         for i, layer in enumerate(self.mlp_g):
             out = layer(out, w[i])
@@ -369,15 +345,10 @@ class CloudGenerator(nn.Module):
         self.synthetic_block2 = PointGNNConv(128, z_dim)
         self.synthetic_block3 = PointGNNConv(128, z_dim)
 
-        # self.synthetic_block3 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
-        # self.synthetic_block4 = LINKX(POINTS, 128, 128, 128, 2, z_dim)
-
     def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
 
         x, _ = self.synthetic_block1(x, pos, edge_index, w[:2])
-        # x = self.synthetic_block3(x, edge_index, w=w)
-        # x = self.synthetic_block4(x, edge_index, w=w)
         x, _ = self.synthetic_block2(x, pos, edge_index, w[2:4])
         x, _ = self.synthetic_block3(x, pos, edge_index, w[4:])
         
@@ -386,7 +357,8 @@ class CloudGenerator(nn.Module):
         h = h.repeat(x.size(0), 1)
 
         x = torch.cat([x, h], dim=-1)
-        return self.tail(x), x
+        pos = self.tail(x)
+        return pos, x
 
 
 class GaussiansGenerator(nn.Module):
@@ -398,10 +370,6 @@ class GaussiansGenerator(nn.Module):
         self.synthetic_block2 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
         self.synthetic_block3 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
         self.synthetic_block4 = LINKX(POINTS, 256, 256, 256, 3, z_dim)
-        # self.synthetic_block5 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
-        # self.synthetic_block6 = LINKX(POINTS, 512, 512, 512, 2, z_dim)
-        # self.synthetic_block7 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
-        # self.synthetic_block8 = LINKX(POINTS, 256, 256, 256, 2, z_dim)
 
 
     def forward(self, x, pos, edge_index, batch, w):
@@ -410,68 +378,8 @@ class GaussiansGenerator(nn.Module):
         x = self.synthetic_block2(x, edge_index, w=w[3:6])
         x = self.synthetic_block3(x, edge_index, w=w[6:9])
         x = self.synthetic_block4(x, edge_index, w=w[9:])
-        # x = self.synthetic_block5(x, edge_index, w=w[6:])
-        # x = self.synthetic_block6(x, edge_index, w=w[6:])
-        # x = self.synthetic_block7(x, pos, edge_index, w=w)
-        # x = self.synthetic_block8(x, pos, edge_index, w=w)
 
         return torch.cat([x, x_], dim=-1)
-
-
-class Gen(nn.Module):
-    def __init__(self, z_dim=128):
-        super().__init__()
-        self.encoder = rff.layers.GaussianEncoding(
-            sigma=10.0, input_size=3, encoded_size=16
-        )
-
-        self.synthetic_block1 = PointGNNConv(32, z_dim)
-        self.synthetic_block2 = PointGNNConv(64, z_dim)
-        self.synthetic_block3 = PointGNNConv(128, z_dim)
-        self.synthetic_block4 = PointGNNConv(128, z_dim)
-        self.synthetic_block5 = PointGNNConv(256, z_dim)
-        self.synthetic_block6 = PointGNNConv(256, z_dim)
-        self.upblock1 = SynthesisLayer(32, 64, z_dim)
-        self.upblock2 = SynthesisLayer(64, 128, z_dim)
-        self.upblock3 = SynthesisLayer(128, 256, z_dim)
-
-        self.global_conv = nn.Sequential(
-            nn.Linear(256, 256),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(256, 256),
-            nn.LeakyReLU(inplace=True),
-        )
-
-        self.tail = nn.Sequential(
-            nn.Linear(256 * 2, 256),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(256, 256 // 2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(256 // 2, 3),
-            nn.Tanh(),
-        )
-
-    def forward(self, pos, edge_index, batch, w):
-        x = self.encoder(pos)
-
-        x, _ = self.synthetic_block1(x, pos, edge_index, w)
-        x = self.upblock1(x, w[0])
-        x, pos = self.synthetic_block2(x, pos, edge_index, w)
-        edge_index = knn_graph(pos, k=6, batch=batch)
-        x = self.upblock2(x, w[0])
-        x, _ = self.synthetic_block3(x, pos, edge_index, w)
-        x, pos = self.synthetic_block4(x, pos, edge_index, w)
-        edge_index = knn_graph(pos, k=6, batch=batch)
-        x = self.upblock3(x, w[0])
-        x, _ = self.synthetic_block5(x, pos, edge_index, w)
-        x, pos = self.synthetic_block6(x, pos, edge_index, w)
-        
-        h = global_max_pool(x, batch)
-        h = self.global_conv(h)
-        h = h.repeat(x.size(0), 1)
-
-        x = torch.cat([x, h], dim=-1)
-        return self.tail(x), x
 
 
 class ImageGenerator(nn.Module):
@@ -486,7 +394,6 @@ class ImageGenerator(nn.Module):
 
         self.register_buffer("background", torch.ones(3, dtype=torch.float32))
         self.register_buffer("sphere", self._fibonacci_sphere(POINTS, 1.0))
-        self.register_buffer("dist", torch.cdist(self.sphere, self.sphere))
                              
     @staticmethod
     def _fibonacci_sphere(samples=1000, scale=1.0):
@@ -518,7 +425,6 @@ class ImageGenerator(nn.Module):
         images = []
         for camera, w in zip(cameras, ws):
             point_cloud, points_features = self.point_encoder(pos, edge_index, batch, w[:6])
-            # new_edge_index = knn_graph(point_cloud, k=6, batch=sphere.batch)
 
             gaussian = self.gaussians(points_features, point_cloud, edge_index, batch, w[6:])
             gaussian_model = self.decoder(gaussian, point_cloud)
