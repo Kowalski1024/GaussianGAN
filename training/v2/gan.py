@@ -65,65 +65,6 @@ def fmm_modulate_linear(
 
     return out
 
-def fmm_modulation_matrix(
-    weight: torch.Tensor,
-    styles: torch.Tensor,
-) -> torch.Tensor:
-    c_out, c_in = weight.shape
-    rank = styles.shape[0] // (c_in + c_out)
-
-    assert styles.shape[0] % (c_in + c_out) == 0
-    assert len(styles.shape) == 1
-
-    left_matrix = styles[: c_out * rank]  # [left_matrix_size]
-    right_matrix = styles[c_out * rank :]  # [right_matrix_size]
-
-    left_matrix = left_matrix.view(c_out, rank)  # [c_out, rank]
-    right_matrix = right_matrix.view(rank, c_in)  # [c_out, rank]
-
-    modulation = left_matrix @ right_matrix / np.sqrt(rank)  # [c_out, c_in]
-
-    W = weight * (modulation + 1.0)  # [c_out, c_in]
-    W = W / (W.norm(dim=1, keepdim=True) + 1e-8)  # [c_out, c_in]
-    W = W.to(dtype=weight.dtype)
-
-    return W
-
-
-def sample_b(sigma: float, size: tuple) -> Tensor:
-    return torch.randn(size)
-
-
-@torch.jit.script
-def gaussian_encoding(v: Tensor, b: Tensor) -> Tensor:
-    vp = 2 * np.pi * v @ b.T
-    return torch.cat((torch.cos(vp), torch.sin(vp)), dim=-1)
-
-
-class GaussianEncoding(nn.Module):
-    def __init__(self, 
-                 sigma: float,
-                 input_size: float,
-                 encoded_size: float,
-                 style_channels: int,
-                 b: Tensor | None = None):
-        super().__init__()
-        self.input_size = input_size
-        self.encoded_size = encoded_size
-        self.sigma = sigma
-        self.affine = nn.Linear(style_channels, (input_size + encoded_size) * 10)
-        if b is None:
-            b = sample_b(sigma, (encoded_size, input_size))
-        elif sigma is not None or input_size is not None or encoded_size is not None:
-            raise ValueError('Only specify the "b" argument when using it.')
-        b: Tensor
-        self.register_buffer('b', b)
-
-    def forward(self, v: Tensor, style: Tensor) -> Tensor:
-        style = self.affine(style).squeeze(0)
-        b = fmm_modulation_matrix(self.b, style) * self.sigma
-        return gaussian_encoding(v, b)
-
 
 class SynthesisLayer(torch.nn.Module):
     def __init__(
@@ -136,7 +77,7 @@ class SynthesisLayer(torch.nn.Module):
         rank=10,
     ):
         super().__init__()
-
+        self.out_channels = out_channels
         self.w_dim = w_dim
         self.affine = nn.Linear(self.w_dim, (in_channels + out_channels) * rank)
 
@@ -147,7 +88,20 @@ class SynthesisLayer(torch.nn.Module):
             torch.randn([out_channels, in_channels]).to(memory_format=memory_format)
         )
         self.bias = torch.nn.Parameter(torch.zeros([1, out_channels]))
+        self.noise_strength = torch.nn.Parameter(torch.zeros([]))
         self.activation = activation
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+        # https://github.com/pytorch/pytorch/issues/57109
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
 
     def forward(self, x, w):
         styles = self.affine(w).squeeze(0)
@@ -155,8 +109,8 @@ class SynthesisLayer(torch.nn.Module):
         x = fmm_modulate_linear(
             x=x, weight=self.weight, styles=styles, activation="demod"
         )
-
-        x = self.activation(x.add_(self.bias))
+        noise = torch.randn(self.out_channels, device=x.device) * self.noise_strength
+        x = self.activation(x.add_(self.bias).add_(noise))
         return x
     
 
@@ -333,10 +287,6 @@ class CloudGenerator(nn.Module):
         )
 
         self.tail = nn.Sequential(
-            nn.Linear(channels * 2, channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(channels, channels // 2),
-            nn.LeakyReLU(inplace=True),
             nn.Linear(channels // 2, 3),
             nn.Tanh(),
         )
@@ -344,6 +294,9 @@ class CloudGenerator(nn.Module):
         self.synthetic_block1 = PointGNNConv(128, z_dim)
         self.synthetic_block2 = PointGNNConv(128, z_dim)
         self.synthetic_block3 = PointGNNConv(128, z_dim)
+
+        self.layer_1 = SynthesisLayer(channels * 2, channels, z_dim)
+        self.layer_2 = SynthesisLayer(channels, channels // 2, z_dim)
 
     def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
@@ -357,7 +310,9 @@ class CloudGenerator(nn.Module):
         h = h.repeat(x.size(0), 1)
 
         x = torch.cat([x, h], dim=-1)
-        pos = self.tail(x)
+        pos = self.layer_1(x, w[0])
+        pos = self.layer_2(pos, w[0])
+        pos = self.tail(pos)
         return pos, x
 
 
@@ -414,9 +369,12 @@ class ImageGenerator(nn.Module):
 
     def forward(self, ws, camera=None, *args, **kwargs):
         with torch.no_grad():
-            poses = camera[:, :16].view(-1, 4, 4)
-            intrinsics = camera[:, 16:25].view(-1, 3, 3) * 512
-            cameras = extract_cameras(poses, intrinsics)
+            if camera.nelement() == 0:
+                cameras = generate_cameras(ws.size(0), ws.device, 128)
+            else:
+                poses = camera[:, :16].view(-1, 4, 4)
+                intrinsics = camera[:, 16:25].view(-1, 3, 3) * 512
+                cameras = extract_cameras(poses, intrinsics, 128)
 
             sphere = Data(pos=self.sphere)
             pos, batch = sphere.pos, sphere.batch

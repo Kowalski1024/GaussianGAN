@@ -9,11 +9,11 @@ class Camera(NamedTuple):
     world_view_transform: torch.Tensor
     full_proj_transform: torch.Tensor
     camera_center: torch.Tensor
-    image_height: int = 128
-    image_width: int = 128
+    image_height: int = 512
+    image_width: int = 512
 
 
-def extract_cameras(camera_to_world, intrinsics) -> list[Camera]:
+def extract_cameras(camera_to_world, intrinsics, image_size) -> list[Camera]:
     w2c = torch.inverse(camera_to_world)
 
     # Extract FoVx and FoVy from intrinsics matrix
@@ -41,13 +41,15 @@ def extract_cameras(camera_to_world, intrinsics) -> list[Camera]:
                 world_view_transform[i],
                 full_proj_transform[i],
                 camera_center[i],
+                image_size,
+                image_size,
             )
         )
 
     return cameras
 
 
-def generate_cameras(batch_size: int, device):
+def generate_cameras(batch_size: int, device, image_size):
     poses = torch.stack(
         [
             pose_spherical(
@@ -67,7 +69,7 @@ def generate_cameras(batch_size: int, device):
         .unsqueeze(0)
         .repeat(batch_size, 1, 1)
     )
-    return extract_cameras(poses, intrinsics)
+    return extract_cameras(poses, intrinsics, image_size)
 
 
 def pose_spherical(theta, phi, radius):

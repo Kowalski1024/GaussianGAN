@@ -65,6 +65,7 @@ class Dataset(torch.utils.data.Dataset):
             if self._raw_labels.dtype == np.int64:
                 assert self._raw_labels.ndim == 1
                 assert np.all(self._raw_labels >= 0)
+            self._raw_labels_std = self._raw_labels.std(0)
         return self._raw_labels
 
     def close(self): # to be overridden by subclass
@@ -112,6 +113,9 @@ class Dataset(torch.utils.data.Dataset):
         d.xflip = (int(self._xflip[idx]) != 0)
         d.raw_label = self._get_raw_labels()[d.raw_idx].copy()
         return d
+
+    def get_label_std(self):
+        return self._raw_labels_std
 
     @property
     def name(self):
@@ -230,12 +234,13 @@ class CarsDataset(Dataset):
         labels = []
         for image_path in self._all_png_names:
             pose_path = image_path.replace('rgb', 'pose').replace('png', 'txt')
-            intrinsics_path = image_path.replace('rgb', 'intrinsics').replace('png', 'txt')
+            # intrinsics_path = image_path.replace('rgb', 'intrinsics').replace('png', 'txt')
             with self._open_file(pose_path) as f:
                 pose = np.loadtxt(f)
-            with self._open_file(intrinsics_path) as f:
-                intrinsics = np.loadtxt(f) / 512.0
-                intrinsics[-1] = 1.0
+            # with self._open_file(intrinsics_path) as f:
+            #     intrinsics = np.loadtxt(f) / 512.0
+            #     intrinsics[-1] = 1.0
+            intrinsics = np.array([525.0, 0.0, 256.0, 0.0, 525.0, 256.0, 0.0, 0.0, 1.0]) / 512.0
             labels.append(np.concatenate((pose, intrinsics)))
         labels = np.array(labels, dtype=np.float32)
         return labels
@@ -253,13 +258,12 @@ class ImageFolderDataset(Dataset):
 
         if os.path.isdir(self._path):
             self._type = 'dir'
-            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
+            self._all_fnames = list(os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files)
         elif self._file_ext(self._path) == '.zip':
             self._type = 'zip'
-            self._all_fnames = set(self._get_zipfile().namelist())
+            self._all_fnames = list(self._get_zipfile().namelist())
         else:
             raise IOError('Path must point to a directory or zip')
-
         PIL.Image.init()
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         if len(self._image_fnames) == 0:
