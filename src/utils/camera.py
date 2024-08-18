@@ -12,7 +12,7 @@ class Camera(NamedTuple):
     image_height: int
     image_width: int
 
-    def to(self, device):
+    def to(self, device: torch.device) -> "Camera":
         return Camera(
             FoVx=self.FoVx,
             FoVy=self.FoVy,
@@ -21,15 +21,6 @@ class Camera(NamedTuple):
             camera_center=self.camera_center.to(device),
             image_height=self.image_height,
             image_width=self.image_width,
-        )
-    
-    def as_tensor(self) -> torch.Tensor:
-        return torch.stack(
-            [
-                self.world_view_transform,
-                torch.tensor(self.FoVx),
-                torch.tensor(self.FoVy),
-            ]
         )
 
 

@@ -12,7 +12,7 @@ from src.network.generator import ImageGenerator
 from src.network.networks_stylegan2 import Discriminator
 from src.utils.instantiators import instantiate_loggers
 from src.utils.pylogger import RankedLogger
-from src.utils.training import get_dataset
+from src.utils.training import get_dataset, EMACallback
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -35,13 +35,15 @@ def main(cfg: MainConfig) -> None:
 
     loggers = instantiate_loggers(cfg.logger)
 
+    dataset = get_dataset(cfg.dataset)
+
     generator = ImageGenerator(
         generator_config=cfg.generator,
-        image_size=cfg.dataset.image_size,
-        background=cfg.dataset.background,
+        image_size=dataset.image_size,
+        background=dataset.background,
     )
     discriminator = Discriminator()
-    dataset = get_dataset(cfg.dataset)
+    ema_callback = EMACallback()
     print(generator)
 
     model = GANLoss(
@@ -59,6 +61,7 @@ def main(cfg: MainConfig) -> None:
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
         enable_progress_bar=cfg.enable_progress_bar,
+        callbacks=[ema_callback],
     )
     trainer.fit(model)
 

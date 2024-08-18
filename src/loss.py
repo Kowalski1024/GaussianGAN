@@ -15,6 +15,7 @@ from conf.main_config import MainConfig
 from src.utils.pylogger import RankedLogger
 from src.utils.scheluder import GapAwareLRScheduler, LinearWarmupScheduler
 import src.utils.training as training_utils
+import src.utils.plotting as plotting
 from torch_geometric.data import Data
 from torch_geometric.nn import knn_graph
 
@@ -57,10 +58,8 @@ class GANLoss(LightningModule):
 
         # metrics
         self.labels = None
-        self.grid_size = self.main_config.training.image_grid_size
-        self.valid_z = self.generate_noise(
-            self.grid_size[0] * self.grid_size[1], self.noise_channels
-        )
+        self.valid_noise = None
+        self.grid_size = None
         self.images_path = Path(f"{self.main_config.paths.output_dir}/images")
         self.images_path.mkdir(parents=True, exist_ok=True)
 
@@ -179,19 +178,22 @@ class GANLoss(LightningModule):
         return grad_penalty
 
     def setup(self, stage):
-        if stage == "fit":
+        if stage == "fit" and self.local_rank == 0:
             logger.info("Exporting real images")
             image_path = self.images_path / "real.png"
 
-            images, labels = training_utils.setup_snapshot_image_grid(
-                self.dataset, grid_size=self.grid_size
+            self.grid_size, images, labels = plotting.setup_snapshot_image_grid(
+                self.dataset
             )
-            real_img = training_utils.create_image_grid(
+            real_img = plotting.create_image_grid(
                 images, [-1, 1], grid_size=self.grid_size
             )
             real_img.save(image_path)
 
             self.labels = torch.tensor(labels, dtype=torch.float32)
+            self.valid_z = self.generate_noise(
+                self.grid_size[0] * self.grid_size[1], self.noise_channels
+            )
 
     def on_train_epoch_start(self) -> None:
         if self.current_epoch < self.blur_fade_epochs:
@@ -203,6 +205,7 @@ class GANLoss(LightningModule):
             self.curr_blur_sigma = 0
 
         if self.current_epoch % self.main_config.training.image_save_interval == 0:
+            print("Generating fake images")
             z = self.valid_z.to(self.device)
             sphere = self.sphere.to(self.device)
             camera = self.labels.to(self.device)
@@ -211,7 +214,7 @@ class GANLoss(LightningModule):
 
             with torch.no_grad():
                 fake_imgs = self.generator(z, sphere, camera)
-                fake_img = training_utils.create_image_grid(
+                fake_img = plotting.create_image_grid(
                     fake_imgs.cpu().numpy(),
                     drange=(-1, 1),
                     grid_size=self.grid_size,

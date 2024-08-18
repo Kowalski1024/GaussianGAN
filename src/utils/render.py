@@ -59,7 +59,7 @@ def render(
     )
     try:
         screenspace_points.retain_grad()
-    except:
+    except Exception:
         pass
 
     # Set up rasterization configuration
@@ -86,14 +86,9 @@ def render(
     means3D = pc.xyz
     means2D = screenspace_points
     opacity = pc.opacity
-
-    # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
-    # scaling / rotation by the rasterizer.
-    scales = None
-    rotations = None
-    cov3D_precomp = None
     scales = pc.scaling
     rotations = pc.rotation
+    cov3D_precomp = None
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
