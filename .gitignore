@@ -11,3 +11,5 @@ wandb/*
 archive/*
 data/*
 logs/*
+dnnlib
+torch_utils
