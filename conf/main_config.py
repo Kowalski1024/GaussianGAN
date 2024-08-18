@@ -9,10 +9,10 @@ import conf.models as models
 
 @dataclass
 class DatasetConfig:
-    _target_: str = "src.dataset.CarsShapeNetDataset"
-    path: str = "datasets/cars_train.zip"
-    image_size: int = 128
+    _target_: str = "src.datasets.snr_dataset.SNRDataset"
+    path: str = "datasets/srn_cars.zip"
     background: tuple[int, int, int] = (1, 1, 1)
+    use_labels: bool = True
 
 
 @dataclass
@@ -28,12 +28,11 @@ class GANLossConfig:
     stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
     blur_fade_epochs: int = 10
-    r1_gamma: float = 1.0
+    r1_gamma: float = 10.0
 
 
 @dataclass
 class TrainingConfig:
-    image_grid_size: tuple[int, int] = (16, 16)
     image_save_interval: int = 5
 
     generator_warmup: int = 0
