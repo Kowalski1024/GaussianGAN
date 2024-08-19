@@ -2,6 +2,7 @@ import torch
 from src.datasets.dataset_base import Dataset
 from torchvision import transforms
 from omegaconf import DictConfig
+from conf.optimizers import OptimizerConfig
 import hydra
 
 
@@ -11,6 +12,22 @@ def get_dataset(dataset_config: DictConfig) -> Dataset:
     )
     dataset = hydra.utils.instantiate(dataset_config, transform=transform)
     return dataset
+
+
+def adjust_optimizer(
+    optimizer_cfg: OptimizerConfig,
+    reg_interval: int,
+) -> OptimizerConfig:
+    ratio = reg_interval / (reg_interval + 1)
+    optimizer_cfg.lr = optimizer_cfg.lr * ratio
+
+    if hasattr(optimizer_cfg, "betas"):
+        optimizer_cfg.betas = tuple([beta**ratio for beta in optimizer_cfg.betas])
+
+    if hasattr(optimizer_cfg, "weight_decay"):
+        optimizer_cfg.weight_decay = optimizer_cfg.weight_decay * ratio
+
+    return optimizer_cfg
 
 
 def normalize_2nd_moment(x, dim=1, eps=1e-8):

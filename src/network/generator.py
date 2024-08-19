@@ -15,9 +15,8 @@ from src.network.layers import (
     PointGNNConv,
     trunc_exp,
 )
-from src.utils.camera import Camera, extract_cameras
-from src.utils.render import GaussianModel, render
 from src.network.networks_stylegan2 import MappingNetwork
+from src.utils.gaussian_splatting import GaussianModel, extract_cameras, render
 
 
 class CloudNetwork(nn.Module):

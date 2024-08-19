@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 
 import hydra
@@ -28,6 +27,7 @@ class GANLoss(LightningModule):
         blur_sigma: float,
         blur_fade_epochs: int,
         r1_gamma: float,
+        r1_interval: int,
         generator: nn.Module,
         discriminator: nn.Module,
         dataset: Dataset,
@@ -43,6 +43,7 @@ class GANLoss(LightningModule):
         self.curr_blur_sigma = blur_sigma
         self.blur_fade_epochs = blur_fade_epochs
         self.r1_gamma = r1_gamma
+        self.r1_interval = r1_interval
 
         # sphere
         self.batch_size = main_config.dataloader.batch_size
@@ -79,7 +80,6 @@ class GANLoss(LightningModule):
         return F.softplus(logits)
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
-        r1_gamma = self.r1_gamma if batch_idx % 4 == 0 else 0.0
         opt_g, opt_d = self.optimizers()
 
         real_imgs, cameras = batch
@@ -101,16 +101,21 @@ class GANLoss(LightningModule):
         self.manual_backward(loss_fake)
 
         # Maximize logits for real images
-        real_imgs_tmp = real_imgs.detach().requires_grad_(r1_gamma != 0.0)
-
-        real_logits = self.run_discriminator(real_imgs_tmp, cameras)
+        real_logits = self.run_discriminator(real_imgs, cameras)
         loss_real = self.adversarial_loss(-real_logits).mean()
 
-        # R1 regularization
-        r1_penalty = self.r1_penalty(real_logits, real_imgs_tmp, r1_gamma)
-        r1_penalty = r1_penalty.mean().mul(4)
-        self.manual_backward(loss_real + r1_penalty)
+        self.manual_backward(loss_real)
         opt_d.step()
+
+        # Lazy R1 regularization
+        if (batch_idx + 1) % self.r1_interval == 0 and self.r1_gamma != 0.0:
+            opt_d.zero_grad()
+            real_imgs_tmp = real_imgs.clone().detach().requires_grad_(True)
+            real_logits = self.run_discriminator(real_imgs_tmp, cameras)
+            r1_penalty = self.r1_penalty(real_logits, real_imgs_tmp, self.r1_gamma)
+            r1_penalty = r1_penalty.mean().mul(self.r1_interval)
+            self.manual_backward(r1_penalty)
+            opt_d.step()
 
         ### Train generator
         opt_g.zero_grad()
@@ -128,6 +133,7 @@ class GANLoss(LightningModule):
             {
                 "d_loss": loss_real + loss_fake,
                 "g_loss": g_loss,
+                "curr_kimg": self._kimg,
             },
             prog_bar=True,
             logger=False,
@@ -187,12 +193,24 @@ class GANLoss(LightningModule):
         return super().on_train_epoch_start()
 
     def configure_optimizers(self) -> tuple[Optimizer, Optimizer]:
+        logger.info("Configuring optimizers.")
         training_config = self.main_config.training
+        g_optimizer_cfg = training_config.generator_optimizer
+        d_optimizer_cfg = training_config.discriminator_optimizer
+
+        # Adjust discriminator optimizer for R1 regularization
+        if self.r1_gamma != 0:
+            d_optimizer_cfg = training_utils.adjust_optimizer(
+                d_optimizer_cfg, self.r1_interval
+            )
+
         opt_g = hydra.utils.instantiate(
-            training_config.generator_optimizer, self.generator.parameters()
+            g_optimizer_cfg,
+            self.generator.parameters(),
         )
         opt_d = hydra.utils.instantiate(
-            training_config.discriminator_optimizer, self.discriminator.parameters()
+            d_optimizer_cfg,
+            self.discriminator.parameters(),
         )
 
         g_scheduler = LinearWarmupScheduler(opt_g, training_config.generator_warmup)

@@ -51,6 +51,7 @@ def main(cfg: MainConfig) -> None:
     img_checkpoint_callback = ImgCheckpointCallback(
         dataset,
         hydra_output_dir / "images",
+        interval=cfg.training.image_save_interval,
     )
 
     model = GANLoss(
@@ -63,7 +64,7 @@ def main(cfg: MainConfig) -> None:
 
     trainer = Trainer(
         max_epochs=1000,
-        limit_train_batches=4,
+        limit_train_batches=64,
         log_every_n_steps=16,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),

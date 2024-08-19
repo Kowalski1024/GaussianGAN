@@ -28,7 +28,8 @@ class GANLossConfig:
     stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
     blur_fade_epochs: int = 10
-    r1_gamma: float = 10.0
+    r1_gamma: float = 5.0
+    r1_interval: int = 16
 
 
 @dataclass
@@ -64,7 +65,9 @@ class MainConfig:
     logger: dict = field(default_factory=lambda: {})
 
     generator: models.GeneratorConfig = field(default_factory=models.GeneratorConfig)
-    discriminator: models.DiscriminatorConfig = field(default_factory=models.DiscriminatorConfig)
+    discriminator: models.DiscriminatorConfig = field(
+        default_factory=models.DiscriminatorConfig
+    )
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
