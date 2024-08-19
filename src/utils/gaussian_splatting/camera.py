@@ -80,7 +80,9 @@ def _get_projection_matrices(znear, zfar, fovX, fovY):
     return P
 
 
-def generate_cameras(batch_size: int, device):
+def generate_cameras(
+    batch_size: int, image_size: int, device: torch.device, fov: float = 0.9074
+):
     poses = torch.stack(
         [
             pose_spherical(
@@ -93,17 +95,7 @@ def generate_cameras(batch_size: int, device):
         dim=0,
     ).to(device)
     poses[:, :3, 1:3] *= -1
-    intrinsics = (
-        torch.tensor(
-            [[512.0, 0.0, 256.0], [0.0, 512.0, 256.0], [0.0, 0.0, 1.0]], device=device
-        )
-        .unsqueeze(0)
-        .repeat(batch_size, 1, 1)
-    )
-
-    fovx = 2 * torch.atan(intrinsics[:, 0, 2] / intrinsics[:, 0, 0])
-    fovy = 2 * torch.atan(intrinsics[:, 1, 2] / intrinsics[:, 1, 1])
-    return extract_cameras(poses, fovx, fovy, 128)
+    return extract_cameras(poses, fov, fov, image_size)
 
 
 def pose_spherical(theta, phi, radius):

@@ -7,7 +7,7 @@ from diff_gaussian_rasterization import (
     GaussianRasterizer,
 )
 
-from src.utils.camera import Camera
+from src.utils.gaussian_splatting import Camera
 
 
 @dataclass
