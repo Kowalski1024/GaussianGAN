@@ -2,9 +2,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING
-import conf.optimizers as optimizers
+
 import conf.models as models
+import conf.optimizers as optimizers
 
 
 @dataclass

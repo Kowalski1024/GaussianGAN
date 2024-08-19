@@ -2,8 +2,8 @@ from itertools import pairwise
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch import Tensor
+import torch.nn as nn
 from torch_geometric import nn as gnn
 from torch_geometric.nn.inits import reset
 from torch_geometric.typing import Adj, OptTensor

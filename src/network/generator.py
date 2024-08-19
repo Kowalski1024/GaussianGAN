@@ -2,8 +2,8 @@ from itertools import pairwise
 
 import rff
 import torch
-import torch.nn as nn
 from torch import Tensor
+import torch.nn as nn
 from torch_geometric.data import Batch, Data
 from torch_geometric.typing import Adj
 
@@ -129,7 +129,7 @@ class GaussianDecoder(nn.Module):
         xyz_offset: bool = True,
         restrict_offset: bool = True,
     ):
-        super(GaussianDecoder, self).__init__()
+        super().__init__()
         self.max_scale = max_scale
         self.use_rgb = use_rgb
         self.xyz_offset = xyz_offset

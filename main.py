@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import hydra
-import torch
 from omegaconf import OmegaConf
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.trainer import Trainer, seed_everything
+import torch
 
 from conf.main_config import MainConfig
 from src.loss import GANLoss

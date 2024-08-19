@@ -1,6 +1,7 @@
 from typing import NamedTuple
-import torch
+
 import numpy as np
+import torch
 
 
 class Camera(NamedTuple):
@@ -58,8 +59,8 @@ def extract_cameras(camera_to_world, fovx, fovy, image_resolution) -> list[Camer
 
 def _get_projection_matrices(znear, zfar, fovX, fovY):
     bath_size = fovX.shape[0]
-    tanHalfFovY = torch.tan((fovY / 2))
-    tanHalfFovX = torch.tan((fovX / 2))
+    tanHalfFovY = torch.tan(fovY / 2)
+    tanHalfFovX = torch.tan(fovX / 2)
 
     top = tanHalfFovY * znear
     bottom = -top

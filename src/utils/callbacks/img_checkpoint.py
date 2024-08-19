@@ -1,15 +1,14 @@
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import Callback
-from src.datasets.dataset_base import Dataset
 import numpy as np
 import PIL.Image
-from pathlib import Path
-import torch
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.utilities import rank_zero_only
+import torch
 
-
+from src.datasets.dataset_base import Dataset
 from src.utils.pylogger import RankedLogger
 
 if TYPE_CHECKING:

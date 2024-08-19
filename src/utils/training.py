@@ -1,9 +1,10 @@
-import torch
-from src.datasets.dataset_base import Dataset
-from torchvision import transforms
-from omegaconf import DictConfig
-from conf.optimizers import OptimizerConfig
 import hydra
+from omegaconf import DictConfig
+import torch
+from torchvision import transforms
+
+from conf.optimizers import OptimizerConfig
+from src.datasets.dataset_base import Dataset
 
 
 def get_dataset(dataset_config: DictConfig) -> Dataset:

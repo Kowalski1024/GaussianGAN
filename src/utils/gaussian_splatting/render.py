@@ -1,11 +1,11 @@
-import math
 from dataclasses import dataclass
+import math
 
-import torch
 from diff_gaussian_rasterization import (
     GaussianRasterizationSettings,
     GaussianRasterizer,
 )
+import torch
 
 from src.utils.gaussian_splatting import Camera
 
