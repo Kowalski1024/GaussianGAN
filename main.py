@@ -1,7 +1,7 @@
 from pathlib import Path
-import torch
 
 import hydra
+import torch
 from omegaconf import OmegaConf
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.trainer import Trainer, seed_everything
@@ -10,9 +10,10 @@ from conf.main_config import MainConfig
 from src.loss import GANLoss
 from src.network.generator import ImageGenerator
 from src.network.networks_stylegan2 import Discriminator
+from src.utils.callbacks import EMACallback, ImgCheckpointCallback
 from src.utils.instantiators import instantiate_loggers
 from src.utils.pylogger import RankedLogger
-from src.utils.training import get_dataset, EMACallback
+from src.utils.training import get_dataset
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -43,8 +44,14 @@ def main(cfg: MainConfig) -> None:
         background=dataset.background,
     )
     discriminator = Discriminator()
-    ema_callback = EMACallback()
     print(generator)
+
+    # callbacks
+    ema_callback = EMACallback()
+    img_checkpoint_callback = ImgCheckpointCallback(
+        dataset,
+        hydra_output_dir / "images",
+    )
 
     model = GANLoss(
         **cfg.training.loss,
@@ -53,15 +60,15 @@ def main(cfg: MainConfig) -> None:
         dataset=dataset,
         main_config=cfg,
     )
-    
+
     trainer = Trainer(
         max_epochs=1000,
-        limit_train_batches=64,
+        limit_train_batches=4,
         log_every_n_steps=16,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
         enable_progress_bar=cfg.enable_progress_bar,
-        callbacks=[ema_callback],
+        callbacks=[ema_callback, img_checkpoint_callback],
     )
     trainer.fit(model)
 

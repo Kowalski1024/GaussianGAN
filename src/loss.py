@@ -15,7 +15,6 @@ from conf.main_config import MainConfig
 from src.utils.pylogger import RankedLogger
 from src.utils.scheluder import GapAwareLRScheduler, LinearWarmupScheduler
 import src.utils.training as training_utils
-import src.utils.plotting as plotting
 from torch_geometric.data import Data
 from torch_geometric.nn import knn_graph
 
@@ -177,24 +176,6 @@ class GANLoss(LightningModule):
         grad_penalty = grad_penalty * (r1_gamma / 2)
         return grad_penalty
 
-    def setup(self, stage):
-        if stage == "fit" and self.local_rank == 0:
-            logger.info("Exporting real images")
-            image_path = self.images_path / "real.png"
-
-            self.grid_size, images, labels = plotting.setup_snapshot_image_grid(
-                self.dataset
-            )
-            real_img = plotting.create_image_grid(
-                images, [-1, 1], grid_size=self.grid_size
-            )
-            real_img.save(image_path)
-
-            self.labels = torch.tensor(labels, dtype=torch.float32)
-            self.valid_z = self.generate_noise(
-                self.grid_size[0] * self.grid_size[1], self.noise_channels
-            )
-
     def on_train_epoch_start(self) -> None:
         if self.current_epoch < self.blur_fade_epochs:
             decay_rate = -np.log(1e-2) / self.blur_fade_epochs
@@ -202,24 +183,7 @@ class GANLoss(LightningModule):
                 -decay_rate * self.current_epoch
             )
         else:
-            self.curr_blur_sigma = 0
-
-        if self.current_epoch % self.main_config.training.image_save_interval == 0:
-            print("Generating fake images")
-            z = self.valid_z.to(self.device)
-            sphere = self.sphere.to(self.device)
-            camera = self.labels.to(self.device)
-
-            image_path = Path(self.images_path / f"fake_{self.current_epoch}.png")
-
-            with torch.no_grad():
-                fake_imgs = self.generator(z, sphere, camera)
-                fake_img = plotting.create_image_grid(
-                    fake_imgs.cpu().numpy(),
-                    drange=(-1, 1),
-                    grid_size=self.grid_size,
-                )
-                fake_img.save(image_path)
+            self.curr_blur_sigma = 0.0
         return super().on_train_epoch_start()
 
     def configure_optimizers(self) -> tuple[Optimizer, Optimizer]:
