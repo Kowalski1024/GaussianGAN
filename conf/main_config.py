@@ -34,7 +34,7 @@ class GANLossConfig:
 
 @dataclass
 class TrainingConfig:
-    image_save_interval: int = 5
+    save_img_every_n_epoch: int = 5
 
     generator_warmup: int = 0
     loss: GANLossConfig = field(default_factory=GANLossConfig)
@@ -65,9 +65,7 @@ class MainConfig:
     logger: dict = field(default_factory=lambda: {})
 
     generator: models.GeneratorConfig = field(default_factory=models.GeneratorConfig)
-    discriminator: models.DiscriminatorConfig = field(
-        default_factory=models.DiscriminatorConfig
-    )
+    discriminator: models.DiscriminatorConfig = field(default_factory=models.DiscriminatorConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
@@ -82,8 +80,6 @@ config_store = ConfigStore.instance()
 config_store.store(name="main_config", node=MainConfig)
 
 # register the optimizer config groups
-config_store.store(
-    group="optimizer", name="adamw", node=optimizers.AdamWOptimizerConfig
-)
+config_store.store(group="optimizer", name="adamw", node=optimizers.AdamWOptimizerConfig)
 config_store.store(group="optimizer", name="sgd", node=optimizers.SGDOptimizerConfig)
 config_store.store(group="optimizer", name="adam", node=optimizers.AdamOptimizerConfig)

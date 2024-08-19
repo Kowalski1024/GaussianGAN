@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
-import pytorch_lightning as pl
 from ema_pytorch import EMA
+import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
 
 from src.utils.pylogger import RankedLogger
@@ -19,9 +19,7 @@ class EMACallback(Callback):
         self.use_ema_weights = use_ema_weights
 
     def on_fit_start(self, trainer: pl.Trainer, pl_module: "GANLoss"):
-        self.ema = EMA(
-            pl_module.generator, beta=self.decay, allow_different_devices=True
-        )
+        self.ema = EMA(pl_module.generator, beta=self.decay, allow_different_devices=True)
 
     def on_train_batch_end(
         self, trainer: pl.Trainer, pl_module: "GANLoss", outputs, batch, batch_idx
@@ -32,7 +30,7 @@ class EMACallback(Callback):
 
     def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: "GANLoss"):
         "do validation using the stored parameters"
-        logger.debug("Replacing model weights with EMA version for validation.")
+        logger.info("Replacing model weights with EMA version for validation.")
         # save original parameters before replacing with EMA version
         self.store(pl_module.generator.parameters())
 

@@ -94,7 +94,7 @@ class ImgCheckpointCallback(Callback):
         ).save(fake_path)
 
     @rank_zero_only
-    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: "GANLoss"):
+    def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: "GANLoss"):
         current_epoch = trainer.current_epoch + 1
         if current_epoch % self.interval == 0:
             logger.info(f"Generating images for epoch {current_epoch}")

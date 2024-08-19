@@ -1,6 +1,6 @@
 import os
-import zipfile
 from pathlib import Path
+import zipfile
 
 import numpy as np
 import pyspng

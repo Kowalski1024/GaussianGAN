@@ -6,10 +6,7 @@ from pytorch_lightning.core import LightningModule
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import Optimizer
-from torch.utils.data import DataLoader, Dataset
-from torch_geometric.data import Data
-from torch_geometric.nn import knn_graph
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision.transforms.functional import gaussian_blur
 
 from conf.main_config import MainConfig
@@ -49,7 +46,7 @@ class GANLoss(LightningModule):
         self.batch_size = main_config.dataloader.batch_size
         self.noise_channels = main_config.generator.noise_channels
         self.points = main_config.generator.points
-        self.sphere = self.generate_sphere(self.points, main_config.generator.knn)
+        self.sphere = training_utils.generate_sphere(self.points, main_config.generator.knn)
 
         # models
         self.generator = generator
@@ -70,9 +67,7 @@ class GANLoss(LightningModule):
         blur_size = int(self.curr_blur_sigma * 3)
         blur_size += blur_size % 2 - 1
         if blur_size > 0:
-            images = gaussian_blur(
-                images, kernel_size=blur_size, sigma=self.curr_blur_sigma
-            )
+            images = gaussian_blur(images, kernel_size=blur_size, sigma=self.curr_blur_sigma)
 
         return self.discriminator(images, camera)
 
@@ -86,7 +81,7 @@ class GANLoss(LightningModule):
         sphere = self.sphere.to(real_imgs.device)
         cameras = cameras.to(real_imgs.device)
 
-        noise = self.generate_noise(self.batch_size, self.noise_channels)
+        noise = training_utils.generate_noise(self.batch_size, self.noise_channels)
         noise = noise.to(real_imgs.device)
 
         ### Train discriminator
@@ -112,7 +107,7 @@ class GANLoss(LightningModule):
             opt_d.zero_grad()
             real_imgs_tmp = real_imgs.clone().detach().requires_grad_(True)
             real_logits = self.run_discriminator(real_imgs_tmp, cameras)
-            r1_penalty = self.r1_penalty(real_logits, real_imgs_tmp, self.r1_gamma)
+            r1_penalty = training_utils.r1_penalty(real_logits, real_imgs_tmp, self.r1_gamma)
             r1_penalty = r1_penalty.mean().mul(self.r1_interval)
             self.manual_backward(r1_penalty)
             opt_d.step()
@@ -161,38 +156,18 @@ class GANLoss(LightningModule):
             "fake_loss": loss_fake,
         }
 
-    def generate_sphere(self, points: int, k: int) -> Data:
-        sphere = training_utils.fibonacci_sphere(points)
-        edge_index = knn_graph(sphere, k=k, batch=None, loop=False)
-        return Data(pos=sphere, edge_index=edge_index)
-
-    def generate_noise(
-        self, batch_size: int, noise_channels: int, std: float = 1.0
-    ) -> torch.Tensor:
-        return torch.normal(mean=0.0, std=std, size=(batch_size, noise_channels))
-
-    def r1_penalty(self, real_logits, real_images, r1_gamma):
-        if self.r1_gamma == 0:
-            return torch.tensor(0.0, device=real_images.device)
-
-        grad_real = torch.autograd.grad(
-            real_logits.sum(), real_images, create_graph=True, only_inputs=True
-        )[0]
-        grad_penalty = grad_real.square().sum(dim=(1, 2, 3))
-        grad_penalty = grad_penalty * (r1_gamma / 2)
-        return grad_penalty
-
     def on_train_epoch_start(self) -> None:
         if self.current_epoch < self.blur_fade_epochs:
             decay_rate = -np.log(1e-2) / self.blur_fade_epochs
-            self.curr_blur_sigma = self.blur_sigma * np.exp(
-                -decay_rate * self.current_epoch
-            )
+            self.curr_blur_sigma = self.blur_sigma * np.exp(-decay_rate * self.current_epoch)
         else:
             self.curr_blur_sigma = 0.0
         return super().on_train_epoch_start()
 
-    def configure_optimizers(self) -> tuple[Optimizer, Optimizer]:
+    def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
+        return None
+
+    def configure_optimizers(self):
         logger.info("Configuring optimizers.")
         training_config = self.main_config.training
         g_optimizer_cfg = training_config.generator_optimizer
@@ -200,9 +175,7 @@ class GANLoss(LightningModule):
 
         # Adjust discriminator optimizer for R1 regularization
         if self.r1_gamma != 0:
-            d_optimizer_cfg = training_utils.adjust_optimizer(
-                d_optimizer_cfg, self.r1_interval
-            )
+            d_optimizer_cfg = training_utils.adjust_optimizer(d_optimizer_cfg, self.r1_interval)
 
         opt_g = hydra.utils.instantiate(
             g_optimizer_cfg,
@@ -214,9 +187,7 @@ class GANLoss(LightningModule):
         )
 
         g_scheduler = LinearWarmupScheduler(opt_g, training_config.generator_warmup)
-        d_scheduler = GapAwareLRScheduler(
-            opt_d, **training_config.discriminator_scheduler
-        )
+        d_scheduler = GapAwareLRScheduler(opt_d, **training_config.discriminator_scheduler)
 
         return [opt_g, opt_d], [g_scheduler, d_scheduler]
 
@@ -224,6 +195,18 @@ class GANLoss(LightningModule):
         return DataLoader(
             self.dataset,
             **self.main_config.dataloader,
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        # Dummy data loader for validation
+        data = torch.randn(4, 3, 64, 64)
+        labels = torch.randint(0, 10, (4,))
+
+        dataset = TensorDataset(data, labels)
+
+        return DataLoader(
+            dataset,
+            batch_size=4,
         )
 
     @property

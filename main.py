@@ -27,9 +27,7 @@ def main(cfg: MainConfig) -> None:
     """
     torch.set_float32_matmul_precision("high")
     logger.info(f"\n{OmegaConf.to_yaml(cfg)}")
-    hydra_output_dir = Path(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    )
+    hydra_output_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     logger.info(f"Hydra output directory: {hydra_output_dir}")
 
     seed_everything(seed=cfg.seed)
@@ -51,7 +49,7 @@ def main(cfg: MainConfig) -> None:
     img_checkpoint_callback = ImgCheckpointCallback(
         dataset,
         hydra_output_dir / "images",
-        interval=cfg.training.image_save_interval,
+        interval=cfg.training.save_img_every_n_epoch,
     )
 
     model = GANLoss(
@@ -66,6 +64,8 @@ def main(cfg: MainConfig) -> None:
         max_epochs=1000,
         limit_train_batches=64,
         log_every_n_steps=16,
+        check_val_every_n_epoch=1,
+        limit_val_batches=1,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
         enable_progress_bar=cfg.enable_progress_bar,
