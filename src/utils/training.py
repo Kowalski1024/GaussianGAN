@@ -1,3 +1,7 @@
+from pathlib import Path
+import random
+from typing import Generator
+
 import hydra
 from omegaconf import DictConfig
 import torch
@@ -6,13 +10,42 @@ from torch_geometric.nn import knn_graph
 from torchvision import transforms
 
 from conf.optimizers import OptimizerConfig
-from src.datasets.dataset_base import Dataset
+from src.datasets import Dataset
+from src.utils.pylogger import RankedLogger
+
+logger = RankedLogger(__name__, rank_zero_only=True)
 
 
 def get_dataset(dataset_config: DictConfig) -> Dataset:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     dataset = hydra.utils.instantiate(dataset_config, transform=transform)
     return dataset
+
+
+def label_iterator(dataset: Dataset, batch_size: int) -> Generator[torch.Tensor, None, None]:
+    dataset_len = len(dataset)
+    labels = torch.empty((batch_size, 18), dtype=torch.float32)
+
+    while True:
+        indices = torch.randint(0, dataset_len, (batch_size,))
+        for i, idx in enumerate(indices):
+            labels[i] = torch.tensor(dataset._load_label(idx))
+        yield labels
+
+
+def download_inception_model() -> None:
+    url = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt"
+    path = Path(f"{torch.hub.get_dir()}/checkpoints/inception-2015-12-05.pt")
+    if not path.exists():
+        logger.info("Downloading Inception model...")
+        torch.hub.download_url_to_file(url, str(path))
+
+
+def get_inception_model() -> torch.nn.Module:
+    path = Path(f"{torch.hub.get_dir()}/checkpoints/inception-2015-12-05.pt")
+    if not path.exists():
+        logger.error("Inception model not found.")
+    return torch.jit.load(path).eval()
 
 
 def adjust_optimizer(

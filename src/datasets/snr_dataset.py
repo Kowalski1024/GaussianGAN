@@ -10,6 +10,7 @@ from src.datasets.dataset_base import Dataset
 
 
 class SNRDataset(Dataset):
+    # TODO add train/test split
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.is_zip = zipfile.is_zipfile(self.path)
@@ -19,9 +20,7 @@ class SNRDataset(Dataset):
         if self.is_zip:
             self._zipfile = zipfile.ZipFile(self.path)
             self._all_images = [
-                f.filename
-                for f in self._zipfile.filelist
-                if f.filename.endswith(".png")
+                f.filename for f in self._zipfile.filelist if f.filename.endswith(".png")
             ]
         else:
             self._all_images = [
@@ -35,7 +34,7 @@ class SNRDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         image = self._load_image(idx)
-        label = self._load_raw_label(idx)
+        label = self._load_label(idx)
 
         return self.transform(image), label
 
@@ -77,13 +76,13 @@ class SNRDataset(Dataset):
 
         return image
 
-    def _load_raw_label(self, idx):
+    def _load_label(self, idx):
         if not self.use_labels:
             return torch.tensor([])
 
-        fname = self._all_images[idx]
-
+        fname: str = self._all_images[idx]
         pose_path = fname.replace("rgb", "pose").replace(".png", ".txt")
+
         with self._open_file(pose_path) as f:
             pose = np.loadtxt(f)
 

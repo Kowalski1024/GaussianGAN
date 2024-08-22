@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.utilities import rank_zero_only
 import torch
 
-from src.datasets.dataset_base import Dataset
+from src.datasets import Dataset
 from src.utils.pylogger import RankedLogger
 
 if TYPE_CHECKING:

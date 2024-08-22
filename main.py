@@ -10,10 +10,10 @@ from conf.main_config import MainConfig
 from src.loss import GANLoss
 from src.network.generator import ImageGenerator
 from src.network.networks_stylegan2 import Discriminator
-from src.utils.callbacks import EMACallback, ImgCheckpointCallback
+import src.utils.callbacks as callbacks
 from src.utils.instantiators import instantiate_loggers
 from src.utils.pylogger import RankedLogger
-from src.utils.training import get_dataset
+from src.utils.training import download_inception_model, get_dataset
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -31,9 +31,9 @@ def main(cfg: MainConfig) -> None:
     logger.info(f"Hydra output directory: {hydra_output_dir}")
 
     seed_everything(seed=cfg.seed)
+    download_inception_model()
 
     loggers = instantiate_loggers(cfg.logger)
-
     dataset = get_dataset(cfg.dataset)
 
     generator = ImageGenerator(
@@ -45,11 +45,16 @@ def main(cfg: MainConfig) -> None:
     print(generator)
 
     # callbacks
-    ema_callback = EMACallback()
-    img_checkpoint_callback = ImgCheckpointCallback(
+    ema_callback = callbacks.EMACallback()
+    img_checkpoint_callback = callbacks.ImgCheckpointCallback(
         dataset,
         hydra_output_dir / "images",
         interval=cfg.training.save_img_every_n_epoch,
+    )
+    metrics_callback = callbacks.MetricsCallback(
+        selected_metrics=["fid"],
+        cached_features_path=f"cache/{dataset.name}",
+        interval=cfg.training.metric_every_n_epoch,
     )
 
     model = GANLoss(
@@ -61,15 +66,15 @@ def main(cfg: MainConfig) -> None:
     )
 
     trainer = Trainer(
-        max_epochs=1000,
-        limit_train_batches=64,
-        log_every_n_steps=16,
+        max_epochs=cfg.training.max_epochs,
+        limit_train_batches=cfg.training.limit_train_batches,
+        log_every_n_steps=cfg.training.log_every_n_steps,
         check_val_every_n_epoch=1,
         limit_val_batches=1,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
         enable_progress_bar=cfg.enable_progress_bar,
-        callbacks=[ema_callback, img_checkpoint_callback],
+        callbacks=[ema_callback, img_checkpoint_callback, metrics_callback],
     )
     trainer.fit(model)
 

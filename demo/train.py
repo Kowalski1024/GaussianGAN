@@ -1,21 +1,20 @@
-import torch
-from render import ImageGenerator
+import os
+
 from dataset import CarsDataset
-from torchvision import transforms as T
 from loss_utils import l1_loss, ssim
-import PIL.Image
 import numpy as np
+import PIL.Image
+from render import ImageGenerator
+import torch
 from torch_geometric.data import Data
 from torch_geometric.nn import knn_graph
-import os
-import matplotlib.pyplot as plt
+from torchvision import transforms as T
 
-
-DATASET_PATH = ...
+DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars/car6"
 OUTPUT_PATH = "outputs"
 BATCH_SIZE = 16
 EPOCHS = 300
-POINTS = 8192
+POINTS = 8192 * 2
 IMAGE_SIZE = 128
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)

@@ -24,6 +24,16 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
+    def _load_image(self, idx: int) -> torch.Tensor:
+        raise NotImplementedError
+
+    def _load_label(self, idx: int) -> torch.Tensor:
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str:
+        return f"{self.__class__.__name__}-{self.path.name}"
+
     @property
     def image_size(self) -> int:
         raise NotImplementedError

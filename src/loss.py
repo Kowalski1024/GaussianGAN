@@ -1,15 +1,16 @@
-from pathlib import Path
-
 import hydra
 import numpy as np
 from pytorch_lightning.core import LightningModule
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader
+from torchmetrics import MetricCollection
+from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
 from torchvision.transforms.functional import gaussian_blur
 
 from conf.main_config import MainConfig
+from src.datasets import Dataset
 from src.utils.pylogger import RankedLogger
 from src.utils.scheluder import GapAwareLRScheduler, LinearWarmupScheduler
 import src.utils.training as training_utils
@@ -53,12 +54,6 @@ class GANLoss(LightningModule):
         self.discriminator = discriminator
         self.dataset = dataset
 
-        # metrics
-        self.labels = None
-        self.valid_noise = None
-        self.grid_size = None
-        self.images_path = Path(f"{self.main_config.paths.output_dir}/images")
-        self.images_path.mkdir(parents=True, exist_ok=True)
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
@@ -165,7 +160,7 @@ class GANLoss(LightningModule):
         return super().on_train_epoch_start()
 
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
-        return None
+        pass
 
     def configure_optimizers(self):
         logger.info("Configuring optimizers.")
@@ -198,15 +193,9 @@ class GANLoss(LightningModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        # Dummy data loader for validation
-        data = torch.randn(4, 3, 64, 64)
-        labels = torch.randint(0, 10, (4,))
-
-        dataset = TensorDataset(data, labels)
-
         return DataLoader(
-            dataset,
-            batch_size=4,
+            self.dataset,
+            **self.main_config.dataloader,
         )
 
     @property
