@@ -13,3 +13,4 @@ data/*
 logs/*
 dnnlib
 torch_utils
+cache
