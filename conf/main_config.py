@@ -27,23 +27,27 @@ class DataloaderConfig:
 class GANLossConfig:
     stylemix_prob: float = 0.0
     blur_sigma: float = 10.0
-    blur_fade_epochs: int = 10
+    blur_fade_epochs: int = 100
     r1_gamma: float = 5.0
     r1_interval: int = 16
 
 
 @dataclass
 class TrainingConfig:
+    max_epochs: int = 10000
+    limit_train_batches: int = 64
+    log_every_n_steps: int = 16
     save_img_every_n_epoch: int = 5
+    metric_every_n_epoch: int = 200
 
     generator_warmup: int = 0
     loss: GANLossConfig = field(default_factory=GANLossConfig)
 
     generator_optimizer: optimizers.OptimizerConfig = field(
-        default_factory=optimizers.AdamOptimizerConfig
+        default_factory=optimizers.AdamWOptimizerConfig
     )
     discriminator_optimizer: optimizers.OptimizerConfig = field(
-        default_factory=optimizers.AdamOptimizerConfig
+        default_factory=optimizers.AdamWOptimizerConfig
     )
 
     discriminator_scheduler: optimizers.ScheduledConfig = field(

@@ -153,7 +153,7 @@ class GANLoss(LightningModule):
 
     def on_train_epoch_start(self) -> None:
         if self.current_epoch < self.blur_fade_epochs:
-            decay_rate = -np.log(1e-2) / self.blur_fade_epochs
+            decay_rate = -np.log(1.0 / self.blur_sigma) / self.blur_fade_epochs
             self.curr_blur_sigma = self.blur_sigma * np.exp(-decay_rate * self.current_epoch)
         else:
             self.curr_blur_sigma = 0.0
