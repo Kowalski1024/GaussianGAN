@@ -213,7 +213,7 @@ class GaussianGenerator(nn.Module):
             + self.feature_network.synthethic_layers
         )
 
-        self.mapping_network = MappingNetwork(512, 0, 512, self.synthethic_layers)
+        self.mapping_network = MappingNetwork(512, 0, 512, self.synthethic_layers, num_layers=2)
 
     def forward(self, noise: Tensor, sphere: Data) -> GaussianModel:
         pos, edge_index, batch = sphere.pos, sphere.edge_index, sphere.batch
