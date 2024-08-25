@@ -70,6 +70,7 @@ class GANLoss(LightningModule):
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         opt_g, opt_d = self.optimizers()
+        g_scheduler, d_scheduler = self.lr_schedulers()
 
         real_imgs, cameras = batch
         sphere = self.sphere.to(real_imgs.device)
@@ -114,6 +115,7 @@ class GANLoss(LightningModule):
         g_loss = g_loss.mean()
         self.manual_backward(g_loss)
         opt_g.step()
+        g_scheduler.step()
 
         ### Progress bar
         self.log_dict(
