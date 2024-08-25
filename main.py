@@ -55,6 +55,7 @@ def main(cfg: MainConfig) -> None:
         selected_metrics=["fid"],
         cached_features_path=f"cache/{dataset.name}",
         interval=cfg.training.metric_every_n_epoch,
+        num_samples=50000,
     )
 
     model = GANLoss(

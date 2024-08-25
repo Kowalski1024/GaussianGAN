@@ -63,6 +63,7 @@ class SynthesisLayer(torch.nn.Module):
         out_channels: int,
         style_channels: int,
         use_noise: bool = False,
+        use_bias: bool = True,
         rank: int = 10,
     ):
         super().__init__()
@@ -73,7 +74,10 @@ class SynthesisLayer(torch.nn.Module):
                 memory_format=torch.contiguous_format
             )
         )
-        self.bias = torch.nn.Parameter(torch.zeros([1, out_channels]))
+        if use_bias:
+            self.bias = torch.nn.Parameter(torch.zeros([1, out_channels]))
+        else:
+            self.register_buffer("bias", None)
 
         self.activation = nn.LeakyReLU(inplace=True)
 
@@ -84,7 +88,10 @@ class SynthesisLayer(torch.nn.Module):
             x=x, weight=self.weight, styles=styles, activation="demod"
         )
 
-        x = self.activation(x.add_(self.bias))
+        if self.bias is not None:
+            x.add_(self.bias)
+
+        x = self.activation(x)
         return x
 
 

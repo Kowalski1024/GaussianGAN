@@ -16,6 +16,7 @@ from src.network.layers import (
     trunc_exp,
 )
 from src.network.networks_stylegan2 import MappingNetwork
+from src.network.transformer import PointTransformerConv
 from src.utils.gaussian_splatting import GaussianModel, extract_cameras, render
 
 
@@ -96,13 +97,8 @@ class FeatureNetwork(nn.Module):
         for in_c, out_c in pairwise(layers):
             self.synthethic_layers += layers_config.synthethic_layers
             self.graph_layers.append(
-                LINKX(
-                    num_nodes=num_points,
-                    in_channels=in_c,
-                    hidden_channels=out_c,
-                    out_channels=out_c,
-                    style_channels=style_channels,
-                    **layers_config,
+                PointTransformerConv(
+                    in_channels=in_c, out_channels=out_c
                 )
             )
 
@@ -111,9 +107,8 @@ class FeatureNetwork(nn.Module):
     ) -> Tensor:
         x_ = x
 
-        fragmented_styles = torch.split(styles, self.styles_per_layer)
-        for graph_block, style in zip(self.graph_layers, fragmented_styles):
-            x = graph_block(x, pos, edge_index, style)
+        for graph_block in self.graph_layers:
+            x = graph_block(x, pos, edge_index, styles[0])
 
         return torch.cat([x, x_], dim=-1)
 
