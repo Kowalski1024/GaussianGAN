@@ -54,7 +54,6 @@ class GANLoss(LightningModule):
         self.discriminator = discriminator
         self.dataset = dataset
 
-
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
 
@@ -93,19 +92,17 @@ class GANLoss(LightningModule):
         # Maximize logits for real images
         real_logits = self.run_discriminator(real_imgs, cameras)
         loss_real = self.adversarial_loss(-real_logits).mean()
-
         self.manual_backward(loss_real)
-        opt_d.step()
 
         # Lazy R1 regularization
         if (batch_idx + 1) % self.r1_interval == 0 and self.r1_gamma != 0.0:
-            opt_d.zero_grad()
             real_imgs_tmp = real_imgs.clone().detach().requires_grad_(True)
             real_logits = self.run_discriminator(real_imgs_tmp, cameras)
             r1_penalty = training_utils.r1_penalty(real_logits, real_imgs_tmp, self.r1_gamma)
             r1_penalty = r1_penalty.mean().mul(self.r1_interval)
             self.manual_backward(r1_penalty)
-            opt_d.step()
+
+        opt_d.step()
 
         ### Train generator
         opt_g.zero_grad()
@@ -200,4 +197,4 @@ class GANLoss(LightningModule):
 
     @property
     def _kimg(self):
-        return round((self.global_step * self.batch_size) / 1000, 3)
+        return round((self.global_step // 2 * self.batch_size * self.trainer.world_size) / 1000, 3)
