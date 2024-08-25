@@ -37,7 +37,7 @@ class TrainingConfig:
     max_epochs: int = 10000
     limit_train_batches: int = 64
     log_every_n_steps: int = 16
-    save_img_every_n_epoch: int = 5
+    save_img_every_n_epoch: int = 10
     metric_every_n_epoch: int = 200
 
     generator_warmup: int = 0

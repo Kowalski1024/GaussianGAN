@@ -70,7 +70,7 @@ def main(cfg: MainConfig) -> None:
         max_epochs=cfg.training.max_epochs,
         limit_train_batches=cfg.training.limit_train_batches,
         log_every_n_steps=cfg.training.log_every_n_steps,
-        check_val_every_n_epoch=1,
+        check_val_every_n_epoch=10,
         limit_val_batches=1,
         logger=loggers,
         strategy=DDPStrategy(find_unused_parameters=True),
