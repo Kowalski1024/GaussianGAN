@@ -10,7 +10,7 @@ import conf.optimizers as optimizers
 @dataclass
 class DatasetConfig:
     _target_: str = "src.datasets.snr_dataset.SNRDataset"
-    path: str = "datasets/srn_cars.zip"
+    path: str = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars"
     background: tuple[int, int, int] = (1, 1, 1)
     use_labels: bool = True
 

@@ -84,7 +84,7 @@ class LinearWarmupScheduler:
         self.steps = 1
 
         for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
-            param_group["lr"] = lr * min(self.steps / (self.warmup_steps + 1), 1.0)
+            param_group["lr"] = lr * min(max(self.steps / (self.warmup_steps + 1), 0.1), 1.0)
 
     def zero_grad(self):
         """

@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.utilities import rank_zero_only
 import torch
 from torchmetrics import MetricCollection
 from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
