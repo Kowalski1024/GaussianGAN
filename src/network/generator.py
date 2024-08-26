@@ -9,14 +9,8 @@ from torch_geometric.typing import Adj
 
 from conf.layers import GlobalPoolingConfig, LINKXConfig, PointGNNConfig
 from conf.models import GeneratorConfig
-from src.network.layers import (
-    LINKX,
-    GlobalPoolingLayer,
-    PointGNNConv,
-    trunc_exp,
-)
+from src.network.layers import LINKX, GlobalPoolingLayer, PointGNNConv, trunc_exp
 from src.network.networks_stylegan2 import MappingNetwork
-from src.network.transformer import PointTransformerConv
 from src.utils.gaussian_splatting import GaussianModel, extract_cameras, render
 
 
@@ -37,9 +31,7 @@ class CloudNetwork(nn.Module):
             sigma=10.0, input_size=3, encoded_size=in_channels // 2
         )
 
-        self.global_pooling = GlobalPoolingLayer(
-            **pooling_config, channels=out_channels
-        )
+        self.global_pooling = GlobalPoolingLayer(**pooling_config, channels=out_channels)
 
         self.position_decoder = nn.Sequential(
             nn.Linear(out_channels * 2, out_channels),
@@ -97,8 +89,13 @@ class FeatureNetwork(nn.Module):
         for in_c, out_c in pairwise(layers):
             self.synthethic_layers += layers_config.synthethic_layers
             self.graph_layers.append(
-                PointTransformerConv(
-                    in_channels=in_c, out_channels=out_c
+                LINKX(
+                    num_nodes=num_points,
+                    in_channels=in_c,
+                    hidden_channels=out_c,
+                    out_channels=out_c,
+                    style_channels=style_channels,
+                    **layers_config,
                 )
             )
 
@@ -107,8 +104,9 @@ class FeatureNetwork(nn.Module):
     ) -> Tensor:
         x_ = x
 
-        for graph_block in self.graph_layers:
-            x = graph_block(x, pos, edge_index, styles[0])
+        fragmented_styles = torch.split(styles, self.styles_per_layer)
+        for graph_block, style in zip(self.graph_layers, fragmented_styles):
+            x = graph_block(x, pos, edge_index, style)
 
         return torch.cat([x, x_], dim=-1)
 
@@ -204,8 +202,7 @@ class GaussianGenerator(nn.Module):
         self.decoder = GaussianDecoder(**self.config.decoder)
 
         self.synthethic_layers = (
-            self.cloud_network.synthethic_layers
-            + self.feature_network.synthethic_layers
+            self.cloud_network.synthethic_layers + self.feature_network.synthethic_layers
         )
 
         self.mapping_network = MappingNetwork(512, 0, 512, self.synthethic_layers, num_layers=2)
@@ -235,9 +232,7 @@ class ImageGenerator(nn.Module):
         self.use_rgb = generator_config.decoder.use_rgb
 
         self.background: torch.Tensor
-        self.register_buffer(
-            "background", torch.tensor(background, dtype=torch.float32)
-        )
+        self.register_buffer("background", torch.tensor(background, dtype=torch.float32))
 
     def forward(self, noises: Tensor, sphere: Data, cameras: Tensor) -> Tensor:
         with torch.no_grad():
