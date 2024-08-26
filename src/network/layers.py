@@ -95,6 +95,46 @@ class SynthesisLayer(torch.nn.Module):
         return x
 
 
+class SynthesisBlock(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_channels: int,
+        out_channels: int,
+        style_channels: int,
+        synthethic_layers: int,
+        use_noise: bool = False,
+        rank: int = 10,
+    ):
+        super().__init__()
+
+        self.synthethic_layers = synthethic_layers
+
+        channels = [in_channels] + [hidden_channels] * synthethic_layers + [out_channels]
+        self.final_mlp = nn.ModuleList()
+        for in_c, out_c in pairwise(channels):
+            self.final_mlp.append(
+                SynthesisLayer(
+                    in_channels=in_c,
+                    out_channels=out_c,
+                    style_channels=style_channels,
+                    use_noise=use_noise,
+                    rank=rank,
+                )
+            )
+
+    def forward(self, x, w):
+        out = x
+        for i, layer in enumerate(self.final_mlp):
+            out = layer(out, w)
+        return out
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(synthethic_layers={self.synthethic_layers})"
+        )
+
+
 class LINKX(torch.nn.Module):
     r"""The LINKX model from the `"Large Scale Learning on Non-Homophilous
     Graphs: New Benchmarks and Strong Simple Methods"

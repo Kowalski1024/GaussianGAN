@@ -6,10 +6,11 @@ from torch import Tensor
 import torch.nn as nn
 from torch_geometric.data import Batch, Data
 from torch_geometric.typing import Adj
+import torch_geometric.nn as gnn
 
 from conf.layers import GlobalPoolingConfig, LINKXConfig, PointGNNConfig
 from conf.models import GeneratorConfig
-from src.network.layers import LINKX, GlobalPoolingLayer, PointGNNConv, trunc_exp
+from src.network.layers import LINKX, GlobalPoolingLayer, PointGNNConv, SynthesisBlock, trunc_exp
 from src.network.networks_stylegan2 import MappingNetwork
 from src.utils.gaussian_splatting import GaussianModel, extract_cameras, render
 
@@ -86,16 +87,25 @@ class FeatureNetwork(nn.Module):
 
         layers = [in_channels] + hidden_channels + [out_channels]
         self.graph_layers = nn.ModuleList()
+        self.synth_layers = nn.ModuleList()
         for in_c, out_c in pairwise(layers):
             self.synthethic_layers += layers_config.synthethic_layers
             self.graph_layers.append(
-                LINKX(
+                gnn.models.LINKX(
                     num_nodes=num_points,
                     in_channels=in_c,
                     hidden_channels=out_c,
                     out_channels=out_c,
+                    num_layers=1
+                )
+            )
+            self.synth_layers.append(
+                SynthesisBlock(
+                    in_channels=out_c,
+                    hidden_channels=out_c,
+                    out_channels=out_c,
                     style_channels=style_channels,
-                    **layers_config,
+                    synthethic_layers=layers_config.synthethic_layers,
                 )
             )
 
@@ -104,9 +114,10 @@ class FeatureNetwork(nn.Module):
     ) -> Tensor:
         x_ = x
 
-        fragmented_styles = torch.split(styles, self.styles_per_layer)
-        for graph_block, style in zip(self.graph_layers, fragmented_styles):
-            x = graph_block(x, pos, edge_index, style)
+        style = styles[0]
+        for graph_block, syth_block in zip(self.graph_layers, self.synth_layers):
+            x = graph_block(x, edge_index)
+            x = syth_block(x, style)
 
         return torch.cat([x, x_], dim=-1)
 
