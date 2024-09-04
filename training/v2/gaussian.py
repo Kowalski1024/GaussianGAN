@@ -65,6 +65,7 @@ class GaussianDecoder(nn.Module):
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
+                # v = torch.sigmoid(v)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 max_step = 1.2 / 32
@@ -161,4 +162,6 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, bg_color : torch.Tensor
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
 
-    return rendered_image * 2 - 1
+    rendered_image = torch.clamp(rendered_image, 0, 1)
+    rendered_image = rendered_image * 2 - 1
+    return rendered_image

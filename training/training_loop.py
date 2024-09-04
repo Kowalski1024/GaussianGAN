@@ -22,13 +22,14 @@ from torch_utils import misc
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
-from training.scheluder import GapAwareLRScheduler
+from training.scheluder import GapAwareLRScheduler, LinearWarmupScheduler
 import pprint as pp
 
 import legacy
 from metrics import metric_main
 import wandb
 import datetime
+import matplotlib.pyplot as plt
 
 #----------------------------------------------------------------------------
 
@@ -90,6 +91,36 @@ def save_image_grid(img, fname, drange, grid_size):
     if C == 3:
         PIL.Image.fromarray(img, 'RGB').save(fname)
 
+
+def save_cloud_grid(points, fname, grid_size):
+    batch_size, num_points, _ = points.shape
+    
+    # Calculate the number of rows and columns in the grid
+    rows, cols = grid_size
+    
+    # Create a new figure with subplots
+    fig = plt.figure(figsize=(2*cols, 2*rows), dpi=100)
+    
+    for i in range(batch_size):
+        # Create a 3D subplot
+        ax = fig.add_subplot(rows, cols, i+1, projection='3d')
+        
+        # Plot the points
+        ax.scatter(points[i, :, 0], points[i, :, 1], points[i, :, 2], s=0.1)
+        ax.set_axis_off()
+        ax.set_xlim(-0.3, 0.3)
+        ax.set_ylim(-0.3, 0.3)
+        ax.set_zlim(-0.3, 0.3)
+
+        # Set aspect ratio to be equal
+        ax.set_box_aspect((1, 1, 1))
+        
+    # Adjust the layout and save the figure
+    plt.tight_layout()
+    plt.savefig(fname, format='png', dpi=100)
+    plt.close(fig)
+    
+
 #----------------------------------------------------------------------------
 
 def training_loop(
@@ -131,7 +162,7 @@ def training_loop(
     note=None,
 ):
     network_snapshot_ticks = 100
-    image_snapshot_ticks = 25
+    image_snapshot_ticks = 100
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
@@ -164,8 +195,9 @@ def training_loop(
     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     G_ema = copy.deepcopy(G).eval()
 
-    print(G)
-    print(D)
+    if rank == 0:
+        print(G)
+        print(D)
 
     # Resume from existing pickle.
     if (resume_pkl is not None) and (rank == 0):
@@ -225,6 +257,7 @@ def training_loop(
                 phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             else:
                 phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
+                # g_scheluder = LinearWarmupScheduler(opt, 0, opt_kwargs.lr * 0.1)
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
         if name == 'D':
             log4 = np.log(4)
@@ -253,6 +286,7 @@ def training_loop(
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
         images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).detach().numpy()
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
+        # save_cloud_grid(clouds, os.path.join(run_dir, f'cloud_init.png'), grid_size=grid_size)
 
     # Initialize logs.
     if rank == 0:
@@ -283,7 +317,6 @@ def training_loop(
         progress_fn(0, total_kimg)
 
     single_value = torch.randn(1).item()
-    # pp.pprint(G.synthesis.config)
 
     while True:
 
@@ -386,12 +419,12 @@ def training_loop(
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
             images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).detach().numpy()
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
+            # save_cloud_grid(clouds, os.path.join(run_dir, f'cloud{cur_nimg//1000:06d}.png'), grid_size=grid_size)
 
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
         if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0) and cur_tick:
-            print("network snapshot")
             snapshot_data = dict(G=G, D=D, G_ema=G_ema, augment_pipe=augment_pipe, training_set_kwargs=dict(training_set_kwargs))
             for key, value in snapshot_data.items():
                 if isinstance(value, torch.nn.Module):
@@ -404,6 +437,14 @@ def training_loop(
                 del value # conserve memory
             snapshot_pkl = os.path.join(run_dir, f'network-snapshot.pkl')
             if rank == 0:
+                print("network snapshot")
+                #torch.save({
+                #    "g_opt": g_opt.state_dict(),
+                #    "d_opt": d_opt.state_dict(),
+                #    "G": G.state_dict(),
+                #    "D": D.state_dict(),
+                #    "G_ema": G_ema.state_dict()
+                #}, os.path.join(run_dir, f'network-snapshot_{cur_tick}.pth'))
                 with open(snapshot_pkl, 'wb') as f:
                     pickle.dump(snapshot_data, f)
 
@@ -412,8 +453,11 @@ def training_loop(
             if rank == 0:
                 print('Evaluating metrics...')
             for metric in metrics:
+                test_set_kwargs = copy.deepcopy(training_set_kwargs)
+                test_set_kwargs.train = False
+                test_set_kwargs.use_labels = True
                 result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
+                    dataset_kwargs=test_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
                 if rank == 0:
                     metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
                 stats_metrics.update(result_dict.results)

@@ -165,17 +165,20 @@ class CarsDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
         resolution      = None, # Ensure specific resolution, None = highest available.
+        train: bool = True,
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
         self._zipfile = None
+        dataset_type = "test" # "train" if train else
+        # print(dataset_type)
 
         if Path(self._path).is_dir():
             self._type = 'dir'
             self._all_png_names = [str(p.relative_to(self._path)) for p in Path(self._path).rglob('*.png')]
         elif Path(self._path).suffix == '.zip':
             self._type = 'zip'
-            self._all_png_names = [fname for fname in self._get_zipfile().namelist() if fname.endswith('.png')]
+            self._all_png_names = [fname for fname in self._get_zipfile().namelist() if fname.endswith('.png') and dataset_type in fname] 
         else:
             raise IOError('Path must point to a directory or zip')
 

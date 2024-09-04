@@ -29,7 +29,6 @@ POINTS = 8192 * 2
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
     return x * (x.square().mean(dim=dim, keepdim=True) + eps).rsqrt()
 
-
 def fmm_modulate_linear(
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -69,6 +68,81 @@ def fmm_modulate_linear(
     out = out.view(points_num, c_out)  # [num_rays, c_out]
 
     return out
+
+
+class AdaptivePointNorm(nn.Module):
+    def __init__(self, in_channel, style_dim):
+        super().__init__()
+
+        self.norm = gnn.InstanceNorm(in_channel)
+        self.affine = nn.Linear(style_dim, in_channel * 2)
+
+        self.affine.weight.data.normal_()
+        self.affine.bias.data.zero_()
+
+        self.affine.bias.data[:in_channel] = 1
+        self.affine.bias.data[in_channel:] = 0
+
+    def forward(self, input, style):
+        style = self.affine(style)
+        gamma, beta = style.chunk(2, 1)
+
+        out = self.norm(input)
+        out = (gamma * out).add_(beta)
+
+        return out
+
+
+class GNNConv(nn.Module):
+    def __init__(self, channels, aggr="max"):
+        super().__init__()
+
+        self.mlp_h = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(channels, 3),
+            nn.Tanh(),
+        )
+
+        self.mlp_f = nn.Sequential(
+            nn.Linear(channels + 3, channels),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.mlp_g = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(channels, channels),
+        )
+
+        self.network = gnn.PointGNNConv(self.mlp_h, self.mlp_f, self.mlp_g, aggr=aggr)
+
+    def forward(self, x, pos, edge_index):
+        return self.network(x, pos, edge_index)
+    
+
+class SyntheticBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, styles):
+        super().__init__()
+        self.add_noise = True
+
+        self.gnn_conv = GNNConv(in_channels)
+        self.adaptive_norm = AdaptivePointNorm(in_channels, styles)
+        self.leaky_relu = nn.LeakyReLU(inplace=True)
+
+        if self.add_noise:
+            self.noise_strength = torch.nn.Parameter(torch.zeros([]))
+
+    def forward(self, h, pos, edge_index, style):
+        h = self.gnn_conv(h, pos, edge_index)
+
+        if self.add_noise:
+            noise = torch.randn_like(h) * self.noise_strength
+            h = h + noise
+
+        h = self.leaky_relu(h)
+        h = self.adaptive_norm(h, style)
+        return h
 
 
 class SynthesisLayer(torch.nn.Module):
@@ -213,7 +287,6 @@ class LINKX(torch.nn.Module):
                 f'in_channels={self.in_channels}, '
                 f'out_channels={self.out_channels})')
 
-
 class PointGNNConv(gnn.MessagePassing):
     r"""The PointGNN operator from the `"Point-GNN: Graph Neural Network for
     3D Object Detection in a Point Cloud" <https://arxiv.org/abs/2003.01251>`_
@@ -284,6 +357,13 @@ class CloudGenerator(nn.Module):
             sigma=10.0, input_size=3, encoded_size=channels // 2
         )
 
+        self.style = nn.Sequential(
+            nn.Linear(self.z_dim + 3, self.z_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(self.z_dim, self.z_dim),
+            nn.LeakyReLU(inplace=True),
+        )
+
         self.global_conv = nn.Sequential(
             nn.Linear(channels, channels),
             nn.LeakyReLU(inplace=True),
@@ -292,33 +372,38 @@ class CloudGenerator(nn.Module):
         )
 
         self.tail = nn.Sequential(
+            nn.Linear(channels * 2, channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(channels, channels // 2),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(channels // 2, 3),
             nn.Tanh(),
         )
 
-        self.synthetic_block1 = PointGNNConv(128, z_dim)
-        self.synthetic_block2 = PointGNNConv(128, z_dim)
-        self.synthetic_block3 = PointGNNConv(128, z_dim)
+        self.synthetic_block1 = SyntheticBlock(128,128, z_dim)
+        self.synthetic_block2 = SyntheticBlock(128,128, z_dim)
+        # self.synthetic_block3 = PointGNNConv(128, z_dim)
 
-        self.layer_1 = SynthesisLayer(channels * 2, channels, z_dim)
-        self.layer_2 = SynthesisLayer(channels, channels // 2, z_dim)
+        # self.layer_1 = SynthesisLayer(channels * 2, channels, z_dim)
+        # self.layer_2 = SynthesisLayer(channels, channels // 2, z_dim)
 
     def forward(self, pos, edge_index, batch, w):
         x = self.encoder(pos)
         # x = normalize_2nd_moment(x)
+        w = w[0].repeat(pos.size(0), 1)
+        w = torch.cat([w, pos], dim=1)
+        w = self.style(w)
 
-        x, _ = self.synthetic_block1(x, pos, edge_index, w[:2])
-        x, _ = self.synthetic_block2(x, pos, edge_index, w[2:4])
-        x, _ = self.synthetic_block3(x, pos, edge_index, w[4:])
+        x = self.synthetic_block1(x, pos, edge_index, w)
+        x = self.synthetic_block2(x, pos, edge_index, w)
+        # x, _ = self.synthetic_block3(x, pos, edge_index, w[4:])
         
         h = global_max_pool(x, batch)
         h = self.global_conv(h)
         h = h.repeat(x.size(0), 1)
 
         x = torch.cat([x, h], dim=-1)
-        pos = self.layer_1(x, w[0])
-        pos = self.layer_2(pos, w[0])
-        pos = self.tail(pos)
+        pos = self.tail(x)
         return pos, x
 
 
