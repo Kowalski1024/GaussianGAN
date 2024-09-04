@@ -170,7 +170,7 @@ class CarsDataset(Dataset):
     ):
         self._path = path
         self._zipfile = None
-        dataset_type = "test" # "train" if train else
+        dataset_type = "train" if train else "test" # 
         # print(dataset_type)
 
         if Path(self._path).is_dir():
