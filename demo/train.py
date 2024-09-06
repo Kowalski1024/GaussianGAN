@@ -8,13 +8,14 @@ from render import ImageGenerator
 import torch
 from torch_geometric.data import Data
 from torch_geometric.nn import knn_graph
+from torchmetrics.image import PeakSignalNoiseRatio
 from torchvision import transforms as T
 
 DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars/car6"
 OUTPUT_PATH = "outputs"
 BATCH_SIZE = 16
-EPOCHS = 300
-POINTS = 8192 * 2
+EPOCHS = 601
+POINTS = 8192
 IMAGE_SIZE = 128
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)
@@ -91,7 +92,19 @@ def train(model, criterion, optimizer, train_loader, device, epochs):
             except Exception as e:
                 pass
 
-        print(f"Epoch {epoch}, Loss: {loss.item()}")
+        if epoch % 10 == 0:
+            metric = PeakSignalNoiseRatio().to(device)
+            for img, cam in train_loader:
+                img = img.to(device)
+                cam = cam.to(device)
+                with torch.no_grad():
+                    output, _ = model(sphere, cam)
+
+                metric.update(output, img)
+
+            print(f"Epoch {epoch}, Loss: {loss.item()}, PSNR: {metric.compute()}", flush=True)
+        else:
+            print(f"Epoch {epoch}, Loss: {loss.item()}")
 
 
 def main():

@@ -2,9 +2,9 @@ import os
 from typing import NamedTuple
 
 import numpy as np
+from plyfile import PlyData, PlyElement
 import rff
 import torch
-from plyfile import PlyData, PlyElement
 from torch import Tensor, nn
 from torch_geometric import nn as gnn
 from torch_geometric.data import Data
@@ -61,9 +61,7 @@ class GaussianModel(NamedTuple):
         scale = np.log(self.scaling.detach().cpu().numpy())
         rotation = self.rotation.detach().cpu().numpy()
 
-        dtype_full = [
-            (attribute, "f4") for attribute in self.construct_list_of_attributes()
-        ]
+        dtype_full = [(attribute, "f4") for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate(
@@ -115,7 +113,7 @@ class GaussianDecoder(nn.Module):
             "scaling": 3,
             "rotation": 4,
             "opacity": 1,
-            "shs": shs_degree,
+            "shs": 48,
             "xyz": 3,
         }
 
@@ -165,7 +163,7 @@ class GaussianDecoder(nn.Module):
 
         # guass = torch.load("/mnt/d/Tomasz/Pulpit/GaussianGAN/car1.pth")
         return GaussianModel(**ret)
-    
+
 
 class PointGNNConv(gnn.MessagePassing):
     r"""The PointGNN operator from the `"Point-GNN: Graph Neural Network for
@@ -253,9 +251,7 @@ class PointGenerator(nn.Module):
     def __init__(self):
         super(PointGenerator, self).__init__()
 
-        self.encoder = rff.layers.GaussianEncoding(
-            sigma=10.0, input_size=3, encoded_size=64
-        )
+        self.encoder = rff.layers.GaussianEncoding(sigma=10.0, input_size=3, encoded_size=64)
 
         self.global_conv = nn.Sequential(
             nn.Linear(128, 128),
@@ -306,7 +302,7 @@ class Generator(nn.Module):
         super().__init__()
         self.points = PointGenerator()
         self.gaussians = GaussiansGenerator()
-        self.decoder = GaussianDecoder(512, shs_degree, True, offset)
+        self.decoder = GaussianDecoder(512, shs_degree, use_rgb, offset)
 
     def forward(self, sphere: Data):
         edge_index = sphere.edge_index
