@@ -26,7 +26,8 @@ class GANLoss(LightningModule):
         r1_interval: int,
         generator: nn.Module,
         discriminator: nn.Module,
-        dataset: Dataset,
+        train_dataset: Dataset,
+        test_dataset: Dataset,
         main_config: MainConfig,
     ):
         super().__init__()
@@ -50,7 +51,8 @@ class GANLoss(LightningModule):
         # models
         self.generator = generator
         self.discriminator = discriminator
-        self.dataset = dataset
+        self.train_dataset = train_dataset
+        self.test_dataset = test_dataset
 
     def forward(self, zs, camera):
         return self.generator(zs, self.sphere, camera)
@@ -203,15 +205,13 @@ class GANLoss(LightningModule):
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.dataset,
-            subset_type="train",
+            self.train_dataset,
             **self.main_config.dataloader,
         )
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.dataset,
-            subset_type="test",
+            self.test_dataset,
             **self.main_config.dataloader,
         )
 

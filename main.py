@@ -34,12 +34,13 @@ def main(cfg: MainConfig) -> None:
     download_inception_model()
 
     loggers = instantiate_loggers(cfg.logger)
-    dataset = get_dataset(cfg.dataset)
+    train_dataset = get_dataset(cfg.dataset, subset_type=("train",))
+    test_dataset = get_dataset(cfg.dataset, subset_type=("test",))
 
     generator = ImageGenerator(
         generator_config=cfg.generator,
-        image_size=dataset.image_size,
-        background=dataset.background,
+        image_size=train_dataset.image_size,
+        background=train_dataset.background,
     )
     discriminator = Discriminator()
     print(generator)
@@ -47,13 +48,13 @@ def main(cfg: MainConfig) -> None:
     # callbacks
     ema_callback = callbacks.EMACallback()
     img_checkpoint_callback = callbacks.ImgCheckpointCallback(
-        dataset,
+        train_dataset,
         hydra_output_dir / "images",
         interval=cfg.training.save_img_every_n_epoch,
     )
     metrics_callback = callbacks.MetricsCallback(
         selected_metrics=["fid"],
-        cached_features_path=f"cache/{dataset.name}",
+        cached_features_path=f"cache/{train_dataset.name}",
         interval=cfg.training.metric_every_n_epoch,
         num_samples=50000,
     )
@@ -62,7 +63,8 @@ def main(cfg: MainConfig) -> None:
         **cfg.training.loss,
         generator=generator,
         discriminator=discriminator,
-        dataset=dataset,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
         main_config=cfg,
     )
 
