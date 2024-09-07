@@ -20,14 +20,14 @@ class SNRDataset(Dataset):
         if self.is_zip:
             self._zipfile = zipfile.ZipFile(self.path)
             self._all_images = [
-                f.filename for f in self._zipfile.filelist if f.filename.endswith(".png") and f.filename.startswith(subset_type)
+                f.filename for f in self._zipfile.filelist if f.filename.endswith(".png") and any(sub in f.filename for sub in subset_type)
             ]
         else:
             self._all_images = [
                 str(p.relative_to(self.path)) for p in Path(self.path).rglob("*.png")
             ]
 
-        assert len(self._all_images) > 0, f"No images found in {self._path}"
+        assert len(self._all_images) > 0, f"No images found in {self.path}"
 
     def __len__(self) -> int:
         return len(self._all_images)
