@@ -16,9 +16,9 @@ from src.utils.pylogger import RankedLogger
 logger = RankedLogger(__name__, rank_zero_only=True)
 
 
-def get_dataset(dataset_config: DictConfig) -> Dataset:
+def get_dataset(dataset_config: DictConfig, subset_type) -> Dataset:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    dataset = hydra.utils.instantiate(dataset_config, transform=transform)
+    dataset = hydra.utils.instantiate(dataset_config, transform=transform, subset_type=subset_type)
     return dataset
 
 
