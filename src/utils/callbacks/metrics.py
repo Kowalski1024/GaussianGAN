@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.utilities import rank_zero_only
 import torch
 from torchmetrics import MetricCollection
 from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
@@ -92,10 +93,16 @@ class MetricsCallback(Callback):
                 self.metrics.update(img, real=False)
 
             metrics = self.metrics.compute()
-            print(metrics)
-            # pl_module.log_dict(metrics, on_epoch=True, on_step=False)
+            pl_module.log_dict(metrics, on_epoch=True, on_step=False)
 
     def calculate_real_metrics(self, dataloader, device):
+        @rank_zero_only
+        def save_metric(metric, path):
+            metric.sync()
+            state = metric.state_dict()
+            torch.save(state, path)
+            logger.info(f"Saved {metric} metric to {path}")
+
         # load state if available
         metrics_to_load = []
         if self.cache_path.exists() and not self.recalculate:
@@ -118,6 +125,4 @@ class MetricsCallback(Callback):
                 metric.load_state_dict(torch.load(path, map_location=device))
                 logger.info(f"Loaded {name} metric")
             else:
-                state = metric.state_dict()
-                torch.save(state, path)
-                logger.info(f"Saved {name} metric to {path}")
+                save_metric(metric, path)

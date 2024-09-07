@@ -70,7 +70,7 @@ class GapAwareLRScheduler:
 
 
 class LinearWarmupScheduler:
-    def __init__(self, optimizer, warmup_steps):
+    def __init__(self, optimizer, warmup_steps, min_lr=0.0):
         """
         Linear Warmup Scheduler for Adversarial Networks.
 
@@ -80,11 +80,12 @@ class LinearWarmupScheduler:
         """
         self.optimizer = optimizer
         self.warmup_steps = warmup_steps if warmup_steps > 0 else 1
+        self.min_lr = min_lr
         self.learning_rates = [group["lr"] for group in optimizer.param_groups]
-        self.steps = 1
+        self.steps = 0
 
         for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
-            param_group["lr"] = lr * min(max(self.steps / (self.warmup_steps + 1), 0.1), 1.0)
+            param_group["lr"] = min_lr if lr > min_lr and warmup_steps > 0 else lr
 
     def zero_grad(self):
         """
@@ -99,9 +100,15 @@ class LinearWarmupScheduler:
         Args:
             step: current step of the training.
         """
-        for param_group, lr in zip(self.optimizer.param_groups, self.learning_rates):
-            param_group["lr"] = lr * min(self.steps / (self.warmup_steps + 1), 1.0)
         self.steps += 1
+        if self.steps <= self.warmup_steps:
+            new_lrs = [
+                self.min_lr + (lr - self.min_lr) * (self.steps / self.warmup_steps)
+                for lr in self.learning_rates
+            ]
+
+            for param_group, new_lr in zip(self.optimizer.param_groups, new_lrs):
+                param_group["lr"] = new_lr
 
     def state_dict(self):
         """

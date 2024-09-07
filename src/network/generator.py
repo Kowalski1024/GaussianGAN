@@ -170,6 +170,8 @@ class GaussianDecoder(nn.Module):
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
+                v = torch.tanh(v) * 1.0001
+                v = (v + 1) / 2
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 if point_cloud is None:

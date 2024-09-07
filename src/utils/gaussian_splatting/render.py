@@ -22,12 +22,14 @@ class GaussianModel:
         for k, v in state_dict.items():
             setattr(self, k, v)
 
-    def to_float(self):
-        self.xyz = self.xyz.float()
-        self.opacity = self.opacity.float()
-        self.rotation = self.rotation.float()
-        self.scaling = self.scaling.float()
-        self.shs = self.shs.float()
+    def to(self, device):
+        return GaussianModel(
+            xyz=self.xyz.to(device),
+            opacity=self.opacity.to(device),
+            rotation=self.rotation.to(device),
+            scaling=self.scaling.to(device),
+            shs=self.shs.to(device),
+        )
 
     def __repr__(self) -> str:
         return (
@@ -111,4 +113,6 @@ def render(
         cov3D_precomp=cov3D_precomp,
     )
 
-    return rendered_image * 2 - 1
+    rendered_image = torch.clamp(rendered_image, 0.0, 1.0)
+    rendered_image = rendered_image * 2.0 - 1.0
+    return rendered_image

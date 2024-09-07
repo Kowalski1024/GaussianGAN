@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Iterable
 import zipfile
 
 import numpy as np
@@ -10,8 +11,7 @@ from src.datasets.dataset_base import Dataset
 
 
 class SNRDataset(Dataset):
-    # TODO add train/test split
-    def __init__(self, **kwargs):
+    def __init__(self, subset_type: Iterable[str] = ("train"), **kwargs):
         super().__init__(**kwargs)
         self.is_zip = zipfile.is_zipfile(self.path)
 
@@ -20,7 +20,7 @@ class SNRDataset(Dataset):
         if self.is_zip:
             self._zipfile = zipfile.ZipFile(self.path)
             self._all_images = [
-                f.filename for f in self._zipfile.filelist if f.filename.endswith(".png")
+                f.filename for f in self._zipfile.filelist if f.filename.endswith(".png") and f.filename.startswith(subset_type)
             ]
         else:
             self._all_images = [

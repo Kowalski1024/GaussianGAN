@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
-from torchmetrics.image import FrechetInceptionDistance, KernelInceptionDistance
 from torchvision.transforms.functional import gaussian_blur
 
 from conf.main_config import MainConfig
@@ -171,9 +169,27 @@ class GANLoss(LightningModule):
         if self.r1_gamma != 0:
             d_optimizer_cfg = training_utils.adjust_optimizer(d_optimizer_cfg, self.r1_interval)
 
+        g_lr = g_optimizer_cfg.lr
         opt_g = hydra.utils.instantiate(
             g_optimizer_cfg,
-            self.generator.parameters(),
+            [
+                {
+                    "params": self.generator.gaussian_generator.mapping_network.parameters(),
+                    "lr": g_lr,
+                },
+                {
+                    "params": self.generator.gaussian_generator.decoder.parameters(),
+                    "lr": g_lr * 0.1,
+                },
+                {
+                    "params": self.generator.gaussian_generator.cloud_network.parameters(),
+                    "lr": g_lr,
+                },
+                {
+                    "params": self.generator.gaussian_generator.feature_network.parameters(),
+                    "lr": g_lr,
+                },
+            ],
         )
         opt_d = hydra.utils.instantiate(
             d_optimizer_cfg,
@@ -188,12 +204,14 @@ class GANLoss(LightningModule):
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.dataset,
+            subset_type="train",
             **self.main_config.dataloader,
         )
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.dataset,
+            subset_type="test",
             **self.main_config.dataloader,
         )
 
