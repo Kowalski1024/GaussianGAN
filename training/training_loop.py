@@ -76,6 +76,7 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
 def save_image_grid(img, fname, drange, grid_size):
     lo, hi = drange
     img = np.asarray(img, dtype=np.float32)
+    assert np.min(img) >= lo and np.max(img) <= hi
     img = (img - lo) * (255 / (hi - lo))
     img = np.rint(img).clip(0, 255).astype(np.uint8)
 
@@ -257,7 +258,7 @@ def training_loop(
                 phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             else:
                 phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
-                # g_scheluder = LinearWarmupScheduler(opt, 0, opt_kwargs.lr * 0.1)
+                g_scheluder = LinearWarmupScheduler(opt, 100, 0.0001)
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
         if name == 'D':
             log4 = np.log(4)
@@ -388,6 +389,8 @@ def training_loop(
         done = (cur_nimg >= total_kimg * 1000)
         if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
             continue
+
+        g_scheluder.step()
 
         # Print status line, accumulating the same information in training_stats.
         tick_end_time = time.time()
