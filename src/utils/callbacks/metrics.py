@@ -103,6 +103,14 @@ class MetricsCallback(Callback):
             torch.save(state, path)
             logger.info(f"Saved {metric} metric to {path}")
 
+        @rank_zero_only
+        def calculate_metric():
+            logger.info("Calculating real features for metrics...")
+            for img, _ in dataloader:
+                img = img.to(device)
+                img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+                self.metrics.update(img, real=True)
+
         # load state if available
         metrics_to_load = []
         if self.cache_path.exists() and not self.recalculate:
@@ -112,11 +120,7 @@ class MetricsCallback(Callback):
                     metrics_to_load.append(name)
 
         if len(metrics_to_load) != len(self.metrics):
-            logger.info("Calculating real features for metrics...")
-            for img, _ in dataloader:
-                img = img.to(device)
-                img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-                self.metrics.update(img, real=True)
+            calculate_metric()
 
         self.cache_path.mkdir(parents=True, exist_ok=True)
         for name, metric in self.metrics.items():
