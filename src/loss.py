@@ -181,7 +181,7 @@ class GANLoss(LightningModule):
                 },
                 {
                     "params": self.generator.gaussian_generator.decoder.parameters(),
-                    "lr": g_lr * 0.1,
+                    "lr": g_lr,
                 },
                 {
                     "params": self.generator.gaussian_generator.cloud_network.parameters(),
