@@ -165,13 +165,11 @@ class GaussianDecoder(nn.Module):
             if k == "rotation":
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
-                v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=self.max_scale)
+                v = torch.nn.functional.softplus(v)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                v = torch.tanh(v) * 1.0001
-                v = (v + 1) / 2
+                v = torch.nn.functional.silu(v, inplace=True)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 if point_cloud is None:
