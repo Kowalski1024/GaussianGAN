@@ -87,7 +87,7 @@ class ImgCheckpointCallback(Callback):
         labels = self.labels.to(pl_module.device)
 
         with torch.no_grad():
-            fake_imgs = pl_module.generator(noise, sphere, labels)
+            fake_imgs, _ = pl_module.generator(noise, sphere, labels)
 
         create_image_grid(
             fake_imgs.cpu().numpy(), (-1, 1), grid_size=self.grid_size
@@ -104,7 +104,7 @@ class ImgCheckpointCallback(Callback):
             labels = self.labels.to(pl_module.device)
 
             with torch.no_grad():
-                fake_imgs = pl_module.generator(noise, sphere, labels)
+                fake_imgs, _ = pl_module.generator(noise, sphere, labels)
 
             create_image_grid(
                 fake_imgs.cpu().numpy(), (-1, 1), grid_size=self.grid_size

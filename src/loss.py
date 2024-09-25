@@ -24,6 +24,7 @@ class GANLoss(LightningModule):
         blur_fade_epochs: int,
         r1_gamma: float,
         r1_interval: int,
+        scale_lambda: float,
         generator: nn.Module,
         discriminator: nn.Module,
         train_dataset: Dataset,
@@ -41,6 +42,7 @@ class GANLoss(LightningModule):
         self.blur_fade_epochs = blur_fade_epochs
         self.r1_gamma = r1_gamma
         self.r1_interval = r1_interval
+        self.scale_lambda = scale_lambda
 
         # sphere
         self.batch_size = main_config.dataloader.batch_size
@@ -55,7 +57,7 @@ class GANLoss(LightningModule):
         self.test_dataset = test_dataset
 
     def forward(self, zs, camera):
-        return self.generator(zs, self.sphere, camera)
+        return self.generator(zs, self.sphere, camera)[0]
 
     def run_discriminator(self, images, camera):
         blur_size = int(self.curr_blur_sigma * 3)
@@ -84,7 +86,7 @@ class GANLoss(LightningModule):
 
         # Minimize logits for generated images
         with torch.no_grad():
-            fake_imgs = self.generator(noise, sphere, cameras)
+            fake_imgs, _ = self.generator(noise, sphere, cameras)
 
         fake_logits = self.run_discriminator(fake_imgs, cameras)
         loss_fake = self.adversarial_loss(fake_logits).mean()
@@ -108,12 +110,14 @@ class GANLoss(LightningModule):
         ### Train generator
         opt_g.zero_grad()
 
-        fake_imgs = self.generator(noise, sphere, cameras)
+        fake_imgs, scales = self.generator(noise, sphere, cameras)
         fake_logits = self.run_discriminator(fake_imgs, cameras)
+        scales = scales.mean()
 
+        scale_loss = self.scale_lambda * scales.mean()
         g_loss = self.adversarial_loss(-fake_logits)
         g_loss = g_loss.mean()
-        self.manual_backward(g_loss)
+        self.manual_backward(g_loss + scale_loss)
         opt_g.step()
         g_scheduler.step()
 
@@ -138,6 +142,7 @@ class GANLoss(LightningModule):
                 "real_logits": real_logits.mean(),
                 "real_images": fake_logits.mean(),
                 "blur_sigma": self.curr_blur_sigma,
+                "scale_loss": scale_loss,
             },
             on_epoch=True,
             on_step=False,

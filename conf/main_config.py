@@ -30,6 +30,7 @@ class GANLossConfig:
     blur_fade_epochs: int = 100
     r1_gamma: float = 5.0
     r1_interval: int = 16
+    scale_lambda: float = 10.0
 
 
 @dataclass

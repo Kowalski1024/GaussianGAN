@@ -82,13 +82,14 @@ class MetricsCallback(Callback):
             dataloader = pl_module.val_dataloader()
             batchsize = pl_module.batch_size
             label_iter = training_utils.label_iterator(dataloader.dataset, batchsize)
+            self.metrics.reset()
 
             # calculate fake metrics
             for _ in range(self.num_samples // (batchsize * trainer.world_size)):
                 labels = next(label_iter).to(device)
                 noise = training_utils.generate_noise(batchsize, noise_channels).to(device)
                 with torch.no_grad():
-                    img = generator(noise, init_points, labels)
+                    img, _ = generator(noise, init_points, labels)
                 img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
                 self.metrics.update(img, real=False)
 

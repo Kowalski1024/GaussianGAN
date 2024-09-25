@@ -166,10 +166,11 @@ class GaussianDecoder(nn.Module):
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
                 v = torch.nn.functional.softplus(v)
+                # v = torch.clamp(v, min=0, max=0.2)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                v = torch.nn.functional.silu(v, inplace=True)
+                # v = torch.nn.functional.silu(v, inplace=True)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 if point_cloud is None:
@@ -244,10 +245,14 @@ class ImageGenerator(nn.Module):
         images = torch.empty(
             len(noises), 3, self.image_size, self.image_size, device=noises.device
         )
+        scaling = []
 
         for i, (noise, camera) in enumerate(zip(noises, cameras)):
             gaussian_model = self.gaussian_generator(noise, sphere)
+            scale = gaussian_model.scaling
+            scale_norm = torch.norm(scale, dim=-1, p=2).mean()
+            scaling.append(scale_norm)
             img = render(camera, gaussian_model, self.background, use_rgb=self.use_rgb)
             images[i] = img
 
-        return images
+        return images, torch.stack(scaling)
