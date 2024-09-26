@@ -25,6 +25,7 @@ class GANLoss(LightningModule):
         r1_gamma: float,
         r1_interval: int,
         scale_lambda: float,
+        opacity_lambda: float,
         generator: nn.Module,
         discriminator: nn.Module,
         train_dataset: Dataset,
@@ -43,6 +44,7 @@ class GANLoss(LightningModule):
         self.r1_gamma = r1_gamma
         self.r1_interval = r1_interval
         self.scale_lambda = scale_lambda
+        self.opacity_lambda = opacity_lambda
 
         # sphere
         self.batch_size = main_config.dataloader.batch_size
@@ -110,14 +112,19 @@ class GANLoss(LightningModule):
         ### Train generator
         opt_g.zero_grad()
 
-        fake_imgs, scales = self.generator(noise, sphere, cameras)
+        fake_imgs, gaussian_models = self.generator(noise, sphere, cameras)
         fake_logits = self.run_discriminator(fake_imgs, cameras)
-        scales = scales.mean()
+        scales = []
+        opacity = []
+        for gm in gaussian_models:
+            scales.append(torch.norm(gm.scaling, dim=-1, p=2).mean())
+            opacity.append((1 - gm.opacity).mean())
+        scale_loss = self.scale_lambda * torch.stack(scales).mean()
+        opacity_loss = self.opacity_lambda * torch.stack(opacity).mean()
 
-        scale_loss = self.scale_lambda * scales.mean()
         g_loss = self.adversarial_loss(-fake_logits)
         g_loss = g_loss.mean()
-        self.manual_backward(g_loss + scale_loss)
+        self.manual_backward(g_loss + scale_loss + opacity_loss)
         opt_g.step()
         g_scheduler.step()
 

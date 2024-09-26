@@ -245,14 +245,12 @@ class ImageGenerator(nn.Module):
         images = torch.empty(
             len(noises), 3, self.image_size, self.image_size, device=noises.device
         )
-        scaling = []
+        models = []
 
         for i, (noise, camera) in enumerate(zip(noises, cameras)):
             gaussian_model = self.gaussian_generator(noise, sphere)
-            scale = gaussian_model.scaling
-            scale_norm = torch.norm(scale, dim=-1, p=2).mean()
-            scaling.append(scale_norm)
+            models.append(gaussian_model)
             img = render(camera, gaussian_model, self.background, use_rgb=self.use_rgb)
             images[i] = img
 
-        return images, torch.stack(scaling)
+        return images, models
