@@ -119,12 +119,12 @@ class GANLoss(LightningModule):
         for gm in gaussian_models:
             scales.append(torch.norm(gm.scaling, dim=-1, p=2).mean())
             opacity.append((1 - gm.opacity).mean())
-        scale_loss = self.scale_lambda * torch.stack(scales).mean()
-        opacity_loss = self.opacity_lambda * torch.stack(opacity).mean()
+        scale_loss = torch.stack(scales).mean()
+        opacity_loss = torch.stack(opacity).mean()
 
         g_loss = self.adversarial_loss(-fake_logits)
         g_loss = g_loss.mean()
-        self.manual_backward(g_loss + scale_loss + opacity_loss)
+        self.manual_backward(g_loss + self.scale_lambda * scale_loss + self.opacity_lambda * opacity_loss)
         opt_g.step()
         g_scheduler.step()
 
