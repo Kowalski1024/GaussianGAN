@@ -113,7 +113,7 @@ class GaussianDecoder(nn.Module):
             "scaling": 3,
             "rotation": 4,
             "opacity": 1,
-            "shs": 48,
+            "shs": shs_degree,
             "xyz": 3,
         }
 
@@ -133,8 +133,6 @@ class GaussianDecoder(nn.Module):
             elif key == "opacity":
                 torch.nn.init.constant_(layer.bias, inverse_sigmoid(0.1))
 
-            self.decoders.append(layer)
-
     def forward(self, x, pc=None):
         x = self.mlp(x)
 
@@ -144,19 +142,17 @@ class GaussianDecoder(nn.Module):
             if k == "rotation":
                 v = torch.nn.functional.normalize(v)
             elif k == "scaling":
-                v = trunc_exp(v)
-                v = torch.clamp(v, min=0, max=0.02)
+                v = torch.nn.functional.softplus(v)
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                # if self.use_rgb:
-                #     v = torch.sigmoid(v)
+                v = torch.nn.functional.silu(v, inplace=True)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 # if self.offset:
-                # max_step = 1.2 / 32
-                # v = (torch.sigmoid(v) - 0.5) * max_step
-                v = pc
+                max_step = 1.2 / 32
+                v = (torch.sigmoid(v) - 0.5) * max_step
+                v = v + pc
                 # else:
                 #     v = pc
             ret[k] = v
@@ -262,7 +258,7 @@ class PointGenerator(nn.Module):
             nn.Linear(256, 128),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(128, 3),
-            nn.Tanh(),
+            # nn.Tanh(),
         )
 
         self.conv1 = GNNConv(128, 128)

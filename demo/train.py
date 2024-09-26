@@ -10,10 +10,11 @@ from torch_geometric.data import Data
 from torch_geometric.nn import knn_graph
 from torchmetrics.image import PeakSignalNoiseRatio
 from torchvision import transforms as T
+from torch.utils.data import random_split
 
 DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars/car6"
 OUTPUT_PATH = "outputs"
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 EPOCHS = 601
 POINTS = 8192
 IMAGE_SIZE = 128
@@ -62,7 +63,7 @@ def loss_fn(pred, gt, lambd=0.2):
     return (1.0 - lambd) * Ll1 + lambd * (1.0 - ssim(pred, gt))
 
 
-def train(model, criterion, optimizer, train_loader, device, epochs):
+def train(model, criterion, optimizer, train_loader, val_loader, device, epochs):
     sphere = fibonacci_sphere(POINTS)
     sphere = Data(pos=sphere)
     sphere.edge_index = knn_graph(sphere.pos, k=6)
@@ -85,7 +86,7 @@ def train(model, criterion, optimizer, train_loader, device, epochs):
             try:
                 save_image_grid(
                     output[: images**2].detach().cpu().numpy(),
-                    f"{OUTPUT_PATH}/output_{epoch}.png",
+                    f"{OUTPUT_PATH}/output_{epoch:05d}.png",
                     drange=[-1, 1],
                     grid_size=(images, images),
                 )
@@ -94,7 +95,7 @@ def train(model, criterion, optimizer, train_loader, device, epochs):
 
         if epoch % 10 == 0:
             metric = PeakSignalNoiseRatio().to(device)
-            for img, cam in train_loader:
+            for img, cam in val_loader:
                 img = img.to(device)
                 cam = cam.to(device)
                 with torch.no_grad():
@@ -112,8 +113,12 @@ def main():
     dataset = CarsDataset(
         DATASET_PATH, transform=T.Compose([T.ToTensor(), T.Normalize((0.5,), (0.5,))])
     )
-    dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True
+    train_dataset, val_dataset = random_split(dataset, [0.2, 0.8])
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True
+    )
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=BATCH_SIZE, shuffle=False, drop_last=False
     )
     background = torch.ones(3, dtype=torch.float32).to(device)
 
@@ -121,7 +126,7 @@ def main():
     criterion = loss_fn
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
-    train(model, criterion, optimizer, dataloader, device, EPOCHS)
+    train(model, criterion, optimizer, train_dataloader, val_dataloader, device, EPOCHS)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from diff_gaussian_rasterization import (
 from gaussian_model import GaussianModel, Generator
 import torch
 import torch.nn as nn
-from torch.nn.functional import normalize
+from torch.nn.functional import normalize, avg_pool2d
 
 
 class ImageGenerator(nn.Module):
@@ -50,7 +50,7 @@ def render(
     pc: GaussianModel,
     bg_color: torch.Tensor,
     scaling_modifier=1.0,
-    use_rgb=False,
+    use_rgb=True,
 ):
     """
     Render the scene.
@@ -121,4 +121,5 @@ def render(
         cov3D_precomp=cov3D_precomp,
     )
 
+    rendered_image = torch.clamp(rendered_image, 0, 1)
     return rendered_image * 2 - 1
