@@ -98,7 +98,7 @@ class ImgCheckpointCallback(Callback):
         current_epoch = trainer.current_epoch + 1
         if current_epoch % self.interval == 0:
             logger.info(f"Generating images for epoch {current_epoch}")
-            fake_path = self.images_path / f"fake_{current_epoch}.png"
+            fake_path = self.images_path / f"fake_{current_epoch:06d}.png"
             noise = self.valid_noise.to(pl_module.device)
             sphere = pl_module.sphere.to(pl_module.device)
             labels = self.labels.to(pl_module.device)

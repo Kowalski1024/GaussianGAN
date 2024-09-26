@@ -150,6 +150,7 @@ class GANLoss(LightningModule):
                 "real_images": fake_logits.mean(),
                 "blur_sigma": self.curr_blur_sigma,
                 "scale_loss": scale_loss,
+                "opacity_loss": opacity_loss,
             },
             on_epoch=True,
             on_step=False,
