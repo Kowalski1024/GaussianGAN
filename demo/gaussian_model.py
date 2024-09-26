@@ -133,6 +133,8 @@ class GaussianDecoder(nn.Module):
             elif key == "opacity":
                 torch.nn.init.constant_(layer.bias, inverse_sigmoid(0.1))
 
+            self.decoders.append(layer)
+
     def forward(self, x, pc=None):
         x = self.mlp(x)
 
@@ -258,7 +260,7 @@ class PointGenerator(nn.Module):
             nn.Linear(256, 128),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(128, 3),
-            # nn.Tanh(),
+            nn.Tanh(),
         )
 
         self.conv1 = GNNConv(128, 128)
@@ -282,8 +284,8 @@ class GaussiansGenerator(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.conv1 = LINKX(8192, 256, 256, 256, 2)
-        self.conv2 = LINKX(8192, 256, 256, 256, 2)
+        self.conv1 = LINKX(8192*2, 256, 256, 256, 2)
+        self.conv2 = LINKX(8192*2, 256, 256, 256, 2)
 
     def forward(self, x, pos, edge_index, batch):
         x_ = x

@@ -14,9 +14,9 @@ from torch.utils.data import random_split
 
 DATASET_PATH = "/mnt/d/Tomasz/Pulpit/GaussianGAN/datasets/cars/car6"
 OUTPUT_PATH = "outputs"
-BATCH_SIZE = 8
-EPOCHS = 601
-POINTS = 8192
+BATCH_SIZE = 16
+EPOCHS = 1201
+POINTS = 8192*2
 IMAGE_SIZE = 128
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)
@@ -77,7 +77,11 @@ def train(model, criterion, optimizer, train_loader, val_loader, device, epochs)
 
             optimizer.zero_grad()
             output, gaussian_model = model(sphere, camera)
-            loss = criterion(output, image)
+            scaling = gaussian_model.scaling
+            opacity = gaussian_model.opacity
+            scaling_loss = torch.norm(scaling, dim=-1, p=2).mean()
+            opacity_loss = (1-opacity).mean()
+            loss = criterion(output, image) # + 0.05 * scaling_loss + 0.01 * opacity_loss
             loss.backward()
             optimizer.step()
 
