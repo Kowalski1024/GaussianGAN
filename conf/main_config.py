@@ -31,7 +31,7 @@ class GANLossConfig:
     r1_gamma: float = 5.0
     r1_interval: int = 16
     scale_lambda: float = 0.5
-    opacity_lambda: float = 0.1
+    opacity_lambda: float = 0.001
 
 
 @dataclass

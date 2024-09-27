@@ -147,7 +147,7 @@ class GANLoss(LightningModule):
                 "generator_loss": g_loss,
                 "discriminator_loss": loss_real + loss_fake,
                 "real_logits": real_logits.mean(),
-                "real_images": fake_logits.mean(),
+                "fake_logits": fake_logits.mean(),
                 "blur_sigma": self.curr_blur_sigma,
                 "scale_loss": scale_loss,
                 "opacity_loss": opacity_loss,

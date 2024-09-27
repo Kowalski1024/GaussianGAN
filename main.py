@@ -34,6 +34,9 @@ def main(cfg: MainConfig) -> None:
     download_inception_model()
 
     loggers = instantiate_loggers(cfg.logger)
+    for metrics_logger in loggers:
+        metrics_logger.log_hyperparams(cfg)
+
     train_dataset = get_dataset(cfg.dataset, subset_type=("train",))
     test_dataset = get_dataset(cfg.dataset, subset_type=("test",))
 
