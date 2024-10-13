@@ -65,6 +65,7 @@ class SynthesisLayer(torch.nn.Module):
         use_noise: bool = False,
         use_bias: bool = True,
         rank: int = 10,
+        activation=nn.LeakyReLU(inplace=True),
     ):
         super().__init__()
         self.use_noise = use_noise
@@ -72,9 +73,7 @@ class SynthesisLayer(torch.nn.Module):
         self.affine = nn.Linear(style_channels, (in_channels + out_channels) * rank)
 
         self.weight = torch.nn.Parameter(
-            torch.randn([out_channels, in_channels]).to(
-                memory_format=torch.contiguous_format
-            )
+            torch.randn([out_channels, in_channels]).to(memory_format=torch.contiguous_format)
         )
         if use_bias:
             self.bias = torch.nn.Parameter(torch.zeros([1, out_channels]))
@@ -85,7 +84,7 @@ class SynthesisLayer(torch.nn.Module):
         if use_noise:
             self.noise_strength = torch.nn.Parameter(torch.zeros([]))
 
-        self.activation = nn.LeakyReLU(inplace=True)
+        self.activation = activation
 
     def forward(self, x, w):
         styles = self.affine(w).squeeze(0)
@@ -141,9 +140,7 @@ class SynthesisBlock(torch.nn.Module):
         return out
 
     def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}(synthethic_layers={self.synthethic_layers})"
-        )
+        return f"{self.__class__.__name__}(synthethic_layers={self.synthethic_layers})"
 
 
 class LINKX(torch.nn.Module):
@@ -178,17 +175,13 @@ class LINKX(torch.nn.Module):
         if self.num_edge_layers > 1:
             self.edge_norm = nn.BatchNorm1d(hidden_channels)
             channels = [hidden_channels] * num_edge_layers
-            self.edge_mlp = gnn.models.MLP(
-                channels, dropout=0.0, act_first=True, act="leakyrelu"
-            )
+            self.edge_mlp = gnn.models.MLP(channels, dropout=0.0, act_first=True, act="leakyrelu")
         else:
             self.edge_norm = None
             self.edge_mlp = None
 
         channels = [in_channels] + [hidden_channels] * num_node_layers
-        self.node_mlp = gnn.models.MLP(
-            channels, dropout=0.0, act_first=True, act="leakyrelu"
-        )
+        self.node_mlp = gnn.models.MLP(channels, dropout=0.0, act_first=True, act="leakyrelu")
 
         self.cat_lin1 = torch.nn.Linear(hidden_channels, hidden_channels)
         self.cat_lin2 = torch.nn.Linear(hidden_channels, hidden_channels)
@@ -276,11 +269,11 @@ class PointGNNConv(gnn.MessagePassing):
         kwargs.setdefault("aggr", "max")
         super().__init__(**kwargs)
 
-        self.mlp_h = nn.Sequential(
-            nn.Linear(in_channels, in_channels // 2),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(in_channels // 2, 3),
-            nn.Tanh(),
+        self.mlp_h = nn.ModuleList(
+            [
+                SynthesisLayer(in_channels, in_channels // 2, style_channels),
+                SynthesisLayer(in_channels // 2, 3, style_channels, activation=nn.Tanh()),
+            ]
         )
 
         layers = [in_channels + 3] + [in_channels] * synthethic_layers
@@ -309,7 +302,9 @@ class PointGNNConv(gnn.MessagePassing):
         reset(self.mlp_g)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
-        delta = self.mlp_h(x)
+        delta = x
+        for i, layer in enumerate(self.mlp_h):
+            delta = layer(delta, w[i])
         out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
 
         for i, layer in enumerate(self.mlp_g):
