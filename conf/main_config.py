@@ -31,7 +31,7 @@ class GANLossConfig:
     r1_gamma: float = 5.0
     r1_interval: int = 16
     scale_lambda: float = 0.5
-    opacity_lambda: float = 0.001
+    opacity_lambda: float = 0.02
 
 
 @dataclass
@@ -40,7 +40,7 @@ class TrainingConfig:
     limit_train_batches: int = 64
     log_every_n_steps: int = 16
     save_img_every_n_epoch: int = 10
-    metric_every_n_epoch: int = 200
+    metric_every_n_epoch: int = 100
 
     generator_warmup: int = 0
     loss: GANLossConfig = field(default_factory=GANLossConfig)
