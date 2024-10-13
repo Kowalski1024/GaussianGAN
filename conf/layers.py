@@ -6,14 +6,14 @@ from typing import Optional
 @dataclass
 class PointGNNConfig:
     synthethic_layers: int = 2
-    use_noise: bool = False
+    use_noise: bool = True
     rank: int = 10
 
 
 @dataclass
 class LINKXConfig:
     synthethic_layers: int = 2
-    use_noise: bool = False
+    use_noise: bool = True
     rank: int = 10
 
 

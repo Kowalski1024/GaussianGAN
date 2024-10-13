@@ -67,6 +67,8 @@ class SynthesisLayer(torch.nn.Module):
         rank: int = 10,
     ):
         super().__init__()
+        self.use_noise = use_noise
+        self.out_channels = out_channels
         self.affine = nn.Linear(style_channels, (in_channels + out_channels) * rank)
 
         self.weight = torch.nn.Parameter(
@@ -79,13 +81,22 @@ class SynthesisLayer(torch.nn.Module):
         else:
             self.register_buffer("bias", None)
 
+        self.noise_strength = None
+        if use_noise:
+            self.noise_strength = torch.nn.Parameter(torch.zeros([]))
+
         self.activation = nn.LeakyReLU(inplace=True)
 
     def forward(self, x, w):
         styles = self.affine(w).squeeze(0)
 
+        if self.use_noise:
+            noise = torch.randn(self.out_channels, device=x.device) * self.noise_strength
+        else:
+            noise = None
+
         x = fmm_modulate_linear(
-            x=x, weight=self.weight, styles=styles, activation="demod"
+            x=x, weight=self.weight, styles=styles, activation="demod", noise=noise
         )
 
         if self.bias is not None:

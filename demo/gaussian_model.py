@@ -148,7 +148,6 @@ class GaussianDecoder(nn.Module):
             elif k == "opacity":
                 v = torch.sigmoid(v)
             elif k == "shs":
-                v = torch.nn.functional.silu(v, inplace=True)
                 v = torch.reshape(v, (v.shape[0], -1, 3))
             elif k == "xyz":
                 # if self.offset:
