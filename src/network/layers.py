@@ -269,11 +269,11 @@ class PointGNNConv(gnn.MessagePassing):
         kwargs.setdefault("aggr", "max")
         super().__init__(**kwargs)
 
-        self.mlp_h = nn.ModuleList(
-            [
-                SynthesisLayer(in_channels, in_channels // 2, style_channels),
-                SynthesisLayer(in_channels // 2, 3, style_channels, activation=nn.Tanh()),
-            ]
+        self.mlp_h = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 2),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(in_channels // 2, 3),
+            nn.Tanh(),
         )
 
         layers = [in_channels + 3] + [in_channels] * synthethic_layers
@@ -302,9 +302,7 @@ class PointGNNConv(gnn.MessagePassing):
         reset(self.mlp_g)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Adj, w: Tensor) -> Tensor:
-        delta = x
-        for i, layer in enumerate(self.mlp_h):
-            delta = layer(delta, w[i])
+        delta = self.mlp_h(x)
         out = self.propagate(edge_index, x=x, pos=pos, delta=delta)
 
         for i, layer in enumerate(self.mlp_g):
